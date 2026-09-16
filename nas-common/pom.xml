@@ -38,6 +38,12 @@
             <groupId>org.springframework.data</groupId>
             <artifactId>spring-data-elasticsearch</artifactId>
         </dependency>
+        <!-- Redis：版本由 Spring Boot BOM 管理。是否启用由 NasRedisProperties 决定，
+             未配置时不建立任何连接，保证零配置也能启动。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>

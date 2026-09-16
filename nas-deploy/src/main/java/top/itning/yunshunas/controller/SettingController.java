@@ -6,6 +6,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import top.itning.yunshunas.common.config.NasFtpProperties;
 import top.itning.yunshunas.common.config.NasProperties;
+import top.itning.yunshunas.common.config.NasRedisProperties;
 import top.itning.yunshunas.common.db.ApplicationConfig;
 import top.itning.yunshunas.common.model.RestModel;
 import top.itning.yunshunas.common.util.JsonUtils;
@@ -42,6 +43,9 @@ public class SettingController {
             case "es" -> {
                 return RestModel.ok(applicationConfig.getSetting(ElasticsearchProperties.class));
             }
+            case "redis" -> {
+                return RestModel.ok(applicationConfig.getSetting(NasRedisProperties.class));
+            }
             default -> throw new IllegalArgumentException("未知类型");
         }
     }
@@ -64,6 +68,10 @@ public class SettingController {
             case "es" -> {
                 ElasticsearchProperties elasticsearchProperties = JsonUtils.OBJECT_MAPPER.readValue(value, ElasticsearchProperties.class);
                 return RestModel.ok(applicationConfig.setSetting(elasticsearchProperties));
+            }
+            case "redis" -> {
+                NasRedisProperties nasRedisProperties = JsonUtils.OBJECT_MAPPER.readValue(value, NasRedisProperties.class);
+                return RestModel.ok(applicationConfig.setSetting(nasRedisProperties));
             }
             default -> throw new IllegalArgumentException("未知类型");
         }
