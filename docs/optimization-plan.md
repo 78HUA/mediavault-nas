@@ -34,6 +34,7 @@
 | 18 | `fix(build):` 清理失效的 Undertow 替换，修正 WebSocket 容器配置 |
 | 19 | `fix(security):` /del 与 /delTranscoding 增加校验，堵住任意文件删除 |
 | 20 | `feat(redis):` 可降级引入 Redis |
+| 21 | `feat(redis):` 配置变更经 Redis Pub/Sub 广播到所有实例 |
 
 ### 已验证的关键事实（改造的依据）
 
@@ -102,7 +103,7 @@
 |---|---|---|---|---|
 | D1 | `feat(redis): 可降级引入 Redis` | 不破坏「零配置可启动」 | 四种情形实测：不配／配了可用（自检 PONG）／配了不可达（仅 WARN）／enabled=false —— 全部 `/health` 200，POST 即热生效 | ✅ |
 | D2 | `refactor(video): 转码状态迁移到 Redis` | 现在进程内 Map，重启即丢、多实例不共享 | 双实例同时提交同一文件只转一次 | ⬜ |
-| D3 | `feat(config): 配置变更 Redis Pub/Sub 广播` | 现在 `ConfigChangeEvent` 只在本机生效 | 双实例改配置，另一实例即时生效 | ⬜ |
+| D3 | `feat(redis): 配置变更经 Redis Pub/Sub 广播到所有实例` | 项目已有 `ConfigChangeEvent` + `ApplicationListener`（FtpConfig 就靠它重建），**但只在本机生效** —— 用 Pub/Sub 补上跨实例那半边 | 双实例实测：只改 A 的配置 → B 日志出现组件重建 + 「已应用来自实例…的配置变更」，且 B 的 GET 返回新配置（未重启、未手工同步） | ✅ |
 | D4 | `fix(config): 配置热更新改原子快照切换` | 现在 destroy+init 非原子，其它线程仍在读同一批非线程安全 Map | 并发改配置 + 读配置不出异常 | ⬜ |
 
 ### 阶段 E：MQ

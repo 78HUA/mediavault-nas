@@ -4,17 +4,23 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.util.StringUtils;
 import top.itning.yunshunas.common.db.ApplicationConfig;
 import top.itning.yunshunas.common.event.ConfigChangeEvent;
+import top.itning.yunshunas.common.event.RemoteConfigChangeEvent;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /**
@@ -34,14 +40,22 @@ import java.util.Objects;
 @Configuration
 public class NasRedisConfig implements ApplicationListener<ConfigChangeEvent> {
 
+    /**
+     * 配置变更广播频道
+     */
+    public static final String CONFIG_CHANNEL = "yunshu:config:change";
+
     private final ApplicationConfig applicationConfig;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     private LettuceConnectionFactory connectionFactory;
     private StringRedisTemplate redisTemplate;
+    private RedisMessageListenerContainer listenerContainer;
 
     @Autowired
-    public NasRedisConfig(ApplicationConfig applicationConfig) {
+    public NasRedisConfig(ApplicationConfig applicationConfig, ApplicationEventPublisher applicationEventPublisher) {
         this.applicationConfig = applicationConfig;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @PostConstruct
@@ -68,10 +82,43 @@ public class NasRedisConfig implements ApplicationListener<ConfigChangeEvent> {
         } catch (Exception e) {
             log.warn("Redis 连接自检失败，配置已保存但当前不可用：{}", e.getMessage());
         }
+        // 无论自检是否通过都启动订阅：RedisMessageListenerContainer 会在后台重连，
+        // Redis 稍后恢复时能自动订阅上，不必重启应用
+        startConfigSubscription();
+    }
+
+    /**
+     * 订阅配置变更频道
+     * <p>
+     * 本类只负责把收到的消息转成本机的 {@link RemoteConfigChangeEvent}，
+     * 具体解析、落库与组件重建交给 ConfigBroadcaster —— 保持职责单一。
+     */
+    private void startConfigSubscription() {
+        listenerContainer = new RedisMessageListenerContainer();
+        listenerContainer.setConnectionFactory(connectionFactory);
+        listenerContainer.addMessageListener(this::onConfigMessage, new ChannelTopic(CONFIG_CHANNEL));
+        listenerContainer.afterPropertiesSet();
+        listenerContainer.start();
+        log.info("已订阅配置变更频道：{}", CONFIG_CHANNEL);
+    }
+
+    private void onConfigMessage(Message message, byte[] pattern) {
+        String raw = new String(message.getBody(), StandardCharsets.UTF_8);
+        applicationEventPublisher.publishEvent(new RemoteConfigChangeEvent(raw));
     }
 
     @PreDestroy
     public void destroy() {
+        if (Objects.nonNull(listenerContainer)) {
+            try {
+                listenerContainer.stop();
+                listenerContainer.destroy();
+            } catch (Exception e) {
+                // DisposableBean#destroy 声明了 throws Exception；停机阶段的清理失败不应影响关闭流程
+                log.warn("停止配置变更订阅失败：{}", e.getMessage());
+            }
+            listenerContainer = null;
+        }
         if (Objects.nonNull(connectionFactory)) {
             connectionFactory.destroy();
         }
