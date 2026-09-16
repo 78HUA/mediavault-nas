@@ -1,9 +1,6 @@
 package top.itning.yunshunas.common.util;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -19,45 +16,41 @@ public class CommandUtils {
     }
 
     /**
-     * 执行命令
+     * 执行命令（带默认超时）
      *
      * @param command     命令
      * @param commandInfo 输出信息
      * @throws IOException IOException
      */
     public static void process(List<String> command, Consumer<String> commandInfo) throws IOException {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-
-        InputStream inputStream = process.getInputStream();
-        InputStreamReader isr = new InputStreamReader(inputStream);
-        BufferedReader br = new BufferedReader(isr);
-
-        try (inputStream; isr; br) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                commandInfo.accept(line);
-            }
-        }
+        ProcessRunner.run(command, commandInfo);
     }
 
+    /**
+     * 执行长驻命令，不设超时
+     * <p>
+     * 供 aria2c 这类设计上就要一直运行的守护进程使用：给它套超时会在到点后被强制回收。
+     *
+     * @param command     命令
+     * @param commandInfo 输出信息
+     * @throws IOException IOException
+     */
+    public static void processWithoutTimeout(List<String> command, Consumer<String> commandInfo) throws IOException {
+        ProcessRunner.run(command, null, commandInfo);
+    }
+
+    /**
+     * 执行命令并返回输出
+     *
+     * @param command 命令
+     * @return 输出
+     * @throws IOException IOException
+     */
     public static String process(List<String> command) throws IOException {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-
-        InputStream inputStream = process.getInputStream();
-        InputStreamReader isr = new InputStreamReader(inputStream);
-        BufferedReader br = new BufferedReader(isr);
-
-        StringBuilder sb = new StringBuilder();
-        try (inputStream; isr; br) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                sb.append(line);
-            }
-        }
-        return sb.toString();
+        ProcessRunner.Result result = ProcessRunner.run(command);
+        // 保持历史行为：各行直接相连、不插入分隔符。
+        // 调用方用 NumberUtils.toLong 解析 ffprobe 的单值输出，
+        // 若改成按行拼接会多出换行符，Long.parseLong 失败会静默返回 0。
+        return String.join("", result.output());
     }
 }

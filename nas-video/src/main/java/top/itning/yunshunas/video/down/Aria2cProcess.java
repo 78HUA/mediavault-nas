@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import static top.itning.yunshunas.common.util.CommandUtils.process;
+import static top.itning.yunshunas.common.util.CommandUtils.processWithoutTimeout;
 
 /**
  * @author itning
@@ -38,7 +38,8 @@ public class Aria2cProcess {
             command.add("--enable-rpc");
             command.add("--rpc-listen-all");
             try {
-                process(command, line -> {
+                // aria2c 是常驻守护进程，不能套超时
+                processWithoutTimeout(command, line -> {
                     if (logger.isDebugEnabled() && StringUtils.isNotBlank(line)) {
                         logger.debug(line);
                     }
