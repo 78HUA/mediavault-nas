@@ -31,6 +31,7 @@
 | 15 | `feat(music):` 新增 gmt_create 索引 |
 | 16 | `feat(music):` 新增分页接口 /api/music/page |
 | 17 | `docs:` 前导通配符 LIKE 与索引的实测分析 |
+| 18 | `fix(build):` 清理失效的 Undertow 替换，修正 WebSocket 容器配置 |
 
 ### 已验证的关键事实（改造的依据）
 
@@ -85,7 +86,7 @@
 
 | # | 提交 | 目标 | 验证方式 | 状态 |
 |---|---|---|---|---|
-| C1 | `fix(build): Undertow 替换真正生效` | exclusion 打空，实际跑的是 Tomcat | 启动日志容器名 + 依赖树 + jar 体积 | ⬜ |
+| C1 | `fix(build): 清理失效的 Undertow 替换，修正 WebSocket 容器配置` | 实测证明 Undertow 在 Boot 4.1.1 上**不可用**（BOM 不再管理、starter 止于 4.0.0-M1、运行时 API 不兼容），故保留 Tomcat 并清掉白带依赖；顺带把只对 Undertow 生效的 WebSocket 定制器改为对当前容器生效 | 依赖树 / jar 体积（−4.55 MB）/ 启动耗时（5.349→3.187 s）/ WebSocket 实收进度 | ✅ |
 | C2 | `fix(security): /del 路径校验` | 现在是原样绝对路径直接删除 | 构造越权路径，确认被拒 | ⬜ |
 | C3 | `fix(security): /file?id 路径穿越` | 未校验 `..` | 同上 | ⬜ |
 | C4 | `fix(security): WebDAV 禁用 DTD/外部实体` | XML 解析未禁 XXE | 投递外部实体 payload | ⬜ |

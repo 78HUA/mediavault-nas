@@ -49,19 +49,21 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-tomcat</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-undertow</artifactId>
-            <version>4.0.0-M1</version>
-        </dependency>
-        <!-- https://mvnrepository.com/artifact/org.elasticsearch.client/elasticsearch-rest-client -->
+        <!--
+          Undertow 依赖已移除（原先这里引入了 spring-boot-starter-undertow:4.0.0-M1，
+          意图是把内嵌容器从 Tomcat 换成 Undertow）。实测结论：这个意图在 Spring Boot 4.1.1 上无法实现，原因是两层叠加 ——
+            1) Tomcat 并不是从 spring-boot-starter-web 进来的，而是
+               spring-boot-starter-websocket → spring-boot-starter-webmvc → spring-boot-starter-tomcat
+               （Boot 4.x 新增了 webmvc 这一层中间 starter），原 exclusion 覆盖不到；
+            2) 即便补上 exclusion 让 Undertow 生效，应用也会启动失败 ——
+               4.0.0-M1 是 Boot 4.0 线的里程碑版本，其 UndertowWebServerFactoryCustomizer
+               与 Boot 4.1.1 的 PropertyMapper API 不兼容；
+            3) 根因是 Boot 4.x 已不再支持 Undertow：4.1.1 的 BOM 里只管理
+               tomcat / jetty / netty，而 Maven Central 上该 starter 的版本止于 4.0.0-M1。
+          故保留 Tomcat，删除这个永远不会生效、白占体积的依赖；
+          原先针对 Undertow 的 CustomizationBean 也已改为对当前容器生效的写法。
+        -->
         <dependency>
             <groupId>org.elasticsearch.client</groupId>
             <artifactId>elasticsearch-rest-client</artifactId>
