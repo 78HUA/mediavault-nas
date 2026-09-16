@@ -56,21 +56,35 @@ public class FileController {
     @PostMapping("/del")
     @ResponseBody
     public void delFile(@RequestParam String location) throws IOException {
-        String writeDir = iVideoRepository.getWriteDir(location);
-        FileUtils.deleteDirectory(new File(writeDir));
+        // 先校验、再动手：原实现拿到 location 就按原样绝对路径删除，
+        // 且 getWriteDir() 还会先创建目录 —— 任何能访问该端口的人都能删掉机器上的任意文件。
         File file = new File(location);
         if (!file.exists()) {
-            throw new RuntimeException("文件不存在");
+            throw new IllegalArgumentException("文件不存在：" + location);
         }
+        if (!file.isFile()) {
+            throw new IllegalArgumentException("不是文件，拒绝删除：" + location);
+        }
+        if (!videoService.isVideoFile(file.getName())) {
+            throw new IllegalArgumentException("不是支持的视频格式，拒绝删除：" + file.getName());
+        }
+        String writeDir = iVideoRepository.getWriteDir(file.getPath());
+        FileUtils.deleteDirectory(new File(writeDir));
         if (!file.delete()) {
-            throw new RuntimeException("文件删除失败");
+            throw new RuntimeException("文件删除失败：" + location);
         }
     }
 
     @PostMapping("/delTranscoding")
     @ResponseBody
     public void delTranscodingFile(@RequestParam String location) throws IOException {
-        String writeDir = iVideoRepository.getWriteDir(location);
+        // 这里只清理转码产物目录，不要求源文件还在；但仍限制只对视频文件生效，
+        // 否则可以用任意字符串在该目录下反复创建并删除子目录
+        File file = new File(location);
+        if (!videoService.isVideoFile(file.getName())) {
+            throw new IllegalArgumentException("不是支持的视频格式：" + file.getName());
+        }
+        String writeDir = iVideoRepository.getWriteDir(file.getPath());
         FileUtils.deleteDirectory(new File(writeDir));
     }
 
