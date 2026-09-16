@@ -10,17 +10,25 @@
 
 ## 一、已完成
 
-| # | 提交 | 说明 |
-|---|---|---|
-| 1 | `97e774b` | `chore:` 排除本地二创工作草稿（HANDOFF.md、.baseline/） |
-| 2 | `4605ac1` | `feat(video):` 打通 HLS 转码链并修复其无法产出文件的问题 |
-| 3 | `58556aa` | `refactor(video):` 重构转码线程池 —— 有界队列、背压、原子去重、优雅停机 |
+> 完整提交历史见 `git log`（每条都含「问题 → 改动 → 实测」三段）。
+
+| 步骤 | 提交主题 |
+|---|---|
+| 1 | `chore:` 排除本地二创工作草稿（HANDOFF.md、.baseline/） |
+| 2 | `feat(video):` 打通 HLS 转码链并修复其无法产出文件的问题 |
+| 3 | `refactor(video):` 重构转码线程池 —— 有界队列、背压、原子去重、优雅停机 |
+| 4 | `docs:` 新增二创改造实施大纲与进度看板 |
+| 5 | `feat(common):` 新增 ProcessRunner（超时/退出码/stdin/中断） |
+| 6 | `refactor(common):` CommandUtils 委托 ProcessRunner |
+| 7 | `fix(video):` 转码失败不再被当作成功 |
+| 8 | `fix(video):` 清理转码残缺产物，修复失败后无法重转 |
+| 9 | `fix(video):` 修复进度回调的线程安全问题与越界风险 |
 
 ### 已验证的关键事实（改造的依据）
 
 | 事实 | 证据 |
 |---|---|
-| 视频 HLS 转码链**原本不可达**：`VideoTransformHandler` 注入后从未被使用，`put()/status()` 全仓零调用，前端从不请求 m3u8 | 见 `4605ac1` 提交说明 |
+| 视频 HLS 转码链**原本不可达**：`VideoTransformHandler` 注入后从未被使用，`put()/status()` 全仓零调用，前端从不请求 m3u8 | 见步骤 2 的提交说明 |
 | 该链**从未成功产出过文件**：切片命令用了已被 ffmpeg 移除的 `-vbsf`，退出码 8、零产物；而 `CommandUtils` 不检查退出码，失败被当成功上报 | 同上 |
 | 转码吞吐是**纯 CPU 瓶颈**，与线程如何分配无关 | `.baseline/out/transcode-*.txt` 的 E 段参数扫描 |
 | 转码队列原本**无界**，提交 80 个任务拒绝数恒为 0 | 同上 D/F 段 |
@@ -35,14 +43,16 @@
 
 | # | 提交 | 目标 | 验证方式 | 状态 |
 |---|---|---|---|---|
-| A1 | `feat(common): 新增 ProcessRunner 统一子进程执行` | 补上超时、退出码、强制回收、关闭 stdin、输出限长、中断传播 | 用一个故意卡死的假 ffmpeg 证明超时生效 | ⬜ |
-| A2 | `refactor(common): CommandUtils 委托 ProcessRunner` | 保持旧签名兼容，4 个 ffmpeg 调用点自动受益 | 转码仍可跑通 | ⬜ |
-| A3 | `fix(video): 转码失败不再被当作成功` | 检查 ffmpeg 退出码，失败走 `onError` | 故意喂坏文件，确认上报错误而非「完成」 | ⬜ |
-| A4 | `fix(video): 清理转码中间产物与半截产物` | 消除「m3u8 存在即完成」的误判导致永久不可重转 | 中断一次转码，确认可重新转 | ⬜ |
-| A5 | `fix(video): Video2M3u8Helper 线程安全` | `progress` 实例字段改参数传递；静态 `DecimalFormat` 改 `ThreadLocal` | 并发转码时进度不串台 | ⬜ |
-| A6 | `fix(video): 修复进度解析越界` | 无 `fps` 字段时 `substring` 会越界 | 造一个无 fps 输出的场景 | ⬜ |
-| A7 | `fix(download): aria2c 子进程回收 + RPC 鉴权` | 加 `@PreDestroy` 防孤儿进程；补 `--rpc-secret` | 重启后确认无残留 aria2c 进程 | ⬜ |
-| A8 | `feat(video): 转码进度推送节流` | 消除「每行 ffmpeg 输出推一条 WebSocket」的消息风暴 | 统计改造前后 WS 消息条数 | ⬜ |
+| A1 | `feat(common): 新增 ProcessRunner 统一子进程执行` | 补上超时、退出码、强制回收、关闭 stdin、输出限长、中断传播 | 故意卡死的命令证明超时生效 | ✅ |
+| A2 | `refactor(common): CommandUtils 委托 ProcessRunner` | 保持旧签名兼容，调用点无需改动；常驻进程可免超时 | 端到端转码仍跑通 | ✅ |
+| A3 | `fix(video): 转码失败不再被当作成功` | 检查 ffmpeg 退出码，失败走 `onError` | 坏文件 → `failedCount=1` + ERROR 堆栈 | ✅ |
+| A4 | `fix(video): 清理转码残缺产物` | 消除「m3u8 存在即完成」的误判导致永久不可重转 | 中途杀 ffmpeg → 目录清空且可重转 | ✅ |
+| A5 | `fix(video): 修复进度回调的线程安全问题与越界风险` | 去掉单例上的 `progress` 字段；非线程安全的静态 `DecimalFormat` 换 `String.format`；以 `frame=` 开头但无 `fps` 的行不再越界 | 反射验证字段已消失 + 越界行不抛异常 + 百分比语义与原实现一致 | ✅ |
+| A6 | `fix(download): aria2c 子进程回收 + RPC 鉴权` | 加 `@PreDestroy` 防孤儿进程；补 `--rpc-secret` | 重启后确认无残留 aria2c 进程 | ⬜ |
+| A7 | `feat(video): 转码进度推送节流` | 消除「每行 ffmpeg 输出推一条 WebSocket」的消息风暴 | 统计改造前后 WS 消息条数 | ⬜ |
+
+> A5 原本拆成「线程安全」与「越界修复」两步，但两者落在同一个私有方法里：
+> 重写该方法必然同时动到两处，硬拆只会得到一条「明知有 bug 却故意留着」的提交，故合并。
 
 ### 阶段 B：SQL 线（已有改前基线）
 

@@ -11,9 +11,9 @@ import top.itning.yunshunas.common.util.Tuple2;
 
 import java.io.File;
 import java.io.IOException;
-import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static com.jayway.jsonpath.Criteria.where;
 import static com.jayway.jsonpath.Filter.filter;
@@ -46,10 +46,6 @@ public class Video2M3u8Helper {
      */
     private static final String END_FRAME_STR = "fps";
     /**
-     * 进度百分比格式化
-     */
-    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00%");
-    /**
      * 视频分割时间
      */
     private static final String SPLIT_TIME_SECOND = "10";
@@ -57,7 +53,6 @@ public class Video2M3u8Helper {
 
     private final String ffmpegLocation;
     private final String ffprobeLocation;
-    private Progress progress;
 
     public Video2M3u8Helper(String ffmpegBinDir) {
         this.ffmpegLocation = ffmpegBinDir + File.separator + "ffmpeg";
@@ -130,7 +125,8 @@ public class Video2M3u8Helper {
      * @return 转码完成的文件路径
      * @throws IOException IOException
      */
-    private String videoStandardization(String fromFile, String toPath, boolean copyVideo, boolean copyAudio) throws IOException {
+    private String videoStandardization(String fromFile, String toPath, boolean copyVideo, boolean copyAudio,
+                                        Progress progress) throws IOException {
         if (logger.isDebugEnabled()) {
             logger.debug("3/4. start copy {} {} {} {}", fromFile, toPath, copyAudio, copyAudio);
         }
@@ -157,7 +153,7 @@ public class Video2M3u8Helper {
         processChecked(command, line -> {
             if (progress != null) {
                 progress.onLine(line);
-                progress(line, videoFrames);
+                reportProgress(line, videoFrames, progress);
             }
         });
         if (logger.isDebugEnabled()) {
@@ -179,7 +175,6 @@ public class Video2M3u8Helper {
         if (logger.isDebugEnabled()) {
             logger.debug("start videoConvert {} {} {}", fromFile, toPath, fileName);
         }
-        this.progress = progress;
         try {
             if (progress != null) {
                 progress.onStart(fromFile, toPath, fileName);
@@ -188,7 +183,7 @@ public class Video2M3u8Helper {
             if (logger.isDebugEnabled()) {
                 logger.debug("video: {} audio: {}", compliance.t1(), compliance.t2());
             }
-            String copy = videoStandardization(fromFile, toPath, compliance.t1(), compliance.t2());
+            String copy = videoStandardization(fromFile, toPath, compliance.t1(), compliance.t2(), progress);
             // 构建命令
             List<String> command = new ArrayList<>(16);
             command.add(ffmpegLocation);
@@ -321,21 +316,42 @@ public class Video2M3u8Helper {
     }
 
     /**
-     * 进度条
+     * 上报进度
      *
      * @param line        输出的信息
      * @param totalFrames 视频总共帧数
+     * @param progress    进度回调。由调用方传入而不是存到实例字段：
+     *                    本类是单例，多个转码任务并发时字段会被互相覆盖，
+     *                    导致 A 文件的进度推到 B 文件的回调上
      */
-    private void progress(String line, final long totalFrames) {
-        if (progress != null && totalFrames != -1 && line.startsWith(START_FRAME_STR)) {
-            int j = line.indexOf(END_FRAME_STR);
-            String frame = line.substring(6, j).trim();
-            long f = NumberUtils.toLong(frame, -1);
-            String percentage = DECIMAL_FORMAT.format((double) f / (double) totalFrames);
-            progress.onProgress(f, totalFrames, percentage, line);
-        } else if (progress != null) {
+    private void reportProgress(String line, final long totalFrames, Progress progress) {
+        if (progress == null) {
+            return;
+        }
+        int endIndex = startWithFrame(line) ? line.indexOf(END_FRAME_STR) : -1;
+        if (totalFrames != -1 && endIndex > START_FRAME_STR.length()) {
+            long frame = NumberUtils.toLong(line.substring(START_FRAME_STR.length(), endIndex).trim(), -1);
+            // String.format 线程安全，替代原先非线程安全的静态 DecimalFormat。
+            // 注意 DecimalFormat 的 "0.00%" 模式会自动乘 100，这里必须显式乘，否则百分比会缩小 100 倍
+            String percentage = String.format(Locale.ROOT, "%.2f%%", frame * 100.0 / (double) totalFrames);
+            progress.onProgress(frame, totalFrames, percentage, line);
+        } else {
             progress.onProgress(-1, totalFrames, null, line);
         }
+    }
+
+    /**
+     * 是否是帧数进度行。
+     * <p>
+     * 原实现直接用 line.indexOf("fps") 取下标再 substring，一旦该行以 frame= 开头
+     * 却不含 fps 字段（下标为 -1），就会抛 StringIndexOutOfBoundsException；
+     * 而异常会一路抛到 videoConvert 的 catch，把一次本来成功的转码判成失败。
+     *
+     * @param line 输出的信息
+     * @return 是进度行返回 <code>true</code>
+     */
+    private boolean startWithFrame(String line) {
+        return line.startsWith(START_FRAME_STR) && line.indexOf(END_FRAME_STR) > START_FRAME_STR.length();
     }
 
     /**
