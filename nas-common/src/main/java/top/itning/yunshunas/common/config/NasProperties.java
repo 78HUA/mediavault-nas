@@ -33,6 +33,14 @@ public class NasProperties {
     private String aria2cFile;
 
     /**
+     * aria2c RPC 密钥（对应 --rpc-secret）
+     * <p>
+     * 配置后 aria2c 会监听所有网卡且必须携带密钥才能调用 RPC；
+     * 留空则只监听本机，避免把无鉴权的 RPC 接口暴露到局域网。
+     */
+    private String aria2cRpcSecret;
+
+    /**
      * 基础认证配置
      */
     private BasicAuthConfig basicAuth;

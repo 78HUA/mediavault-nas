@@ -44,7 +44,18 @@ public class Aria2cProcess {
             command.add("--rpc-listen-port");
             command.add("6800");
             command.add("--enable-rpc");
-            command.add("--rpc-listen-all");
+            String rpcSecret = nasProperties.getAria2cRpcSecret();
+            if (StringUtils.isNotBlank(rpcSecret)) {
+                // 配了密钥才监听所有网卡：RPC 可远程调用，必须带鉴权
+                command.add("--rpc-secret");
+                command.add(rpcSecret);
+                command.add("--rpc-listen-all");
+            } else {
+                // 未配密钥时保持 aria2 默认的「仅本机监听」
+                // （原先无条件 --rpc-listen-all，等于把无鉴权的 RPC 接口开放给整个局域网）
+                logger.warn("未配置 aria2c RPC 密钥（NasProperties.aria2cRpcSecret），"
+                        + "RPC 仅监听本机；若需远程访问，请先配置密钥再开启 --rpc-listen-all");
+            }
             try {
                 // aria2c 是常驻守护进程：不设超时，但必须保留句柄，否则停机时无法回收它
                 handle = ProcessRunner.start(command, line -> {

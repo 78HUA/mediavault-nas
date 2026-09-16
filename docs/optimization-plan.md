@@ -24,6 +24,7 @@
 | 8 | `fix(video):` 清理转码残缺产物，修复失败后无法重转 |
 | 9 | `fix(video):` 修复进度回调的线程安全问题与越界风险 |
 | 10 | `fix(download):` aria2c 子进程停机回收 |
+| 11 | `fix(download):` aria2c RPC 鉴权与监听范围 |
 
 ### 已验证的关键事实（改造的依据）
 
@@ -50,7 +51,7 @@
 | A4 | `fix(video): 清理转码残缺产物` | 消除「m3u8 存在即完成」的误判导致永久不可重转 | 中途杀 ffmpeg → 目录清空且可重转 | ✅ |
 | A5 | `fix(video): 修复进度回调的线程安全问题与越界风险` | 去掉单例上的 `progress` 字段；非线程安全的静态 `DecimalFormat` 换 `String.format`；以 `frame=` 开头但无 `fps` 的行不再越界 | 反射验证字段已消失 + 越界行不抛异常 + 百分比语义与原实现一致 | ✅ |
 | A6 | `fix(download): aria2c 子进程停机回收` | 保留进程句柄并加 `@PreDestroy`，避免停机后残留孤儿进程占用 6800 端口 | 用假 aria2c（写心跳文件）启动常驻子进程，调 `Handle.stop()` 后心跳停止 | ✅ |
-| A7 | `fix(download): aria2c RPC 鉴权` | 现在 `--rpc-listen-all` 且无 `--rpc-secret`，RPC 对所有网卡无鉴权开放；需可配置密钥 | 未带密钥的 RPC 调用被拒 | ⬜ |
+| A7 | `fix(download): aria2c RPC 鉴权与监听范围` | 原先无条件 `--rpc-listen-all` 且无 `--rpc-secret`，等于把无鉴权的下载器 RPC 开放给整个局域网；改为「配了密钥才监听全网卡且必须带密钥，未配则仅监听本机」 | 用假 aria2c 记录收到的参数，比对两种配置下的命令行 | ✅ |
 | A8 | `feat(video): 转码进度推送节流` | 消除「每行 ffmpeg 输出推一条 WebSocket」的消息风暴 | 统计改造前后 WS 消息条数 | ⬜ |
 
 > A5 原本拆成「线程安全」与「越界修复」两步，但两者落在同一个私有方法里：
