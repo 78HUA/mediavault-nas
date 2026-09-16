@@ -27,19 +27,6 @@ public class CommandUtils {
     }
 
     /**
-     * 执行长驻命令，不设超时
-     * <p>
-     * 供 aria2c 这类设计上就要一直运行的守护进程使用：给它套超时会在到点后被强制回收。
-     *
-     * @param command     命令
-     * @param commandInfo 输出信息
-     * @throws IOException IOException
-     */
-    public static void processWithoutTimeout(List<String> command, Consumer<String> commandInfo) throws IOException {
-        ProcessRunner.run(command, null, commandInfo);
-    }
-
-    /**
      * 执行命令，**并在失败时抛异常**
      * <p>
      * 适用于「产物必须生成」的命令（如 ffmpeg 转码）。不要用于探测类命令：

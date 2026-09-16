@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -76,9 +75,96 @@ public final class ProcessRunner {
     }
 
     /**
+     * 已启动进程的句柄。
+     * <p>
+     * 供 aria2c 这类常驻守护进程使用：调用方需要拿到进程引用才能在停机时主动回收它，
+     * 否则应用退出后子进程会变成孤儿进程继续占用端口。
+     */
+    public static final class Handle {
+
+        private final Process process;
+        private final Thread reader;
+        private final List<String> output;
+
+        private Handle(Process process, Thread reader, List<String> output) {
+            this.process = process;
+            this.reader = reader;
+            this.output = output;
+        }
+
+        /**
+         * @return 进程引用
+         */
+        public Process process() {
+            return process;
+        }
+
+        /**
+         * @return 目前收集到的输出行
+         */
+        public List<String> output() {
+            return List.copyOf(output);
+        }
+
+        /**
+         * 停止进程并等待收尾：先给优雅退出的机会，超时未退再强制回收。
+         *
+         * @param grace 优雅退出的等待时间
+         * @return 是否在宽限期内正常退出
+         */
+        public boolean stop(Duration grace) {
+            if (process.isAlive()) {
+                process.destroy();
+                boolean exited = false;
+                try {
+                    exited = process.waitFor(grace.toMillis(), TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (!exited) {
+                    process.destroyForcibly();
+                    try {
+                        process.waitFor();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                joinQuietly(reader);
+                return exited;
+            }
+            joinQuietly(reader);
+            return true;
+        }
+    }
+
+    /**
+     * 启动命令后立即返回句柄，不等待进程结束
+     *
+     * @param command      命令
+     * @param lineConsumer 每行输出的回调，可为 <code>null</code>
+     * @return 进程句柄
+     * @throws IOException IOException
+     */
+    public static Handle start(List<String> command, Consumer<String> lineConsumer) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        // 子进程若等待标准输入会一直挂住，直接给它 EOF
+        try {
+            process.getOutputStream().close();
+        } catch (IOException e) {
+            // 关闭 stdin 失败不影响后续读取与回收
+        }
+        List<String> retained = Collections.synchronizedList(new ArrayList<>());
+        Thread reader = Thread.ofVirtual().name("process-reader").start(
+                () -> readOutput(process, retained, lineConsumer));
+        return new Handle(process, reader, retained);
+    }
+
+    /**
      * 执行命令，使用默认超时
      *
-     * @param command     命令
+     * @param command      命令
      * @param lineConsumer 每行输出的回调，可为 <code>null</code>
      * @return 执行结果
      * @throws IOException IOException
@@ -108,24 +194,11 @@ public final class ProcessRunner {
      * @throws IOException IOException
      */
     public static Result run(List<String> command, Duration timeout, Consumer<String> lineConsumer) throws IOException {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.redirectErrorStream(true);
-        Process process = builder.start();
-        // 子进程若等待标准输入会一直挂住，直接给它 EOF
-        try {
-            process.getOutputStream().close();
-        } catch (IOException e) {
-            // 关闭 stdin 失败不影响后续读取与回收
-        }
-
-        List<String> retained = Collections.synchronizedList(new ArrayList<>());
-        AtomicBoolean readFailed = new AtomicBoolean(false);
-        Thread reader = Thread.ofVirtual().name("process-reader").start(
-                () -> readOutput(process, retained, lineConsumer, readFailed));
-
-        boolean finished;
+        Handle handle = start(command, lineConsumer);
+        Process process = handle.process();
         boolean timedOut = false;
         try {
+            boolean finished;
             if (timeout == null) {
                 process.waitFor();
                 finished = true;
@@ -143,18 +216,12 @@ public final class ProcessRunner {
             Thread.currentThread().interrupt();
             throw new IOException("执行命令时被中断：" + command, e);
         } finally {
-            joinQuietly(reader);
+            joinQuietly(handle.reader);
         }
-
-        if (readFailed.get() && !timedOut) {
-            // 读取异常通常意味着进程被外力终止（如强杀），退出码仍以进程为准
-            return new Result(process.exitValue(), false, List.copyOf(retained));
-        }
-        return new Result(timedOut ? -1 : process.exitValue(), timedOut, List.copyOf(retained));
+        return new Result(timedOut ? -1 : process.exitValue(), timedOut, handle.output());
     }
 
-    private static void readOutput(Process process, List<String> retained, Consumer<String> lineConsumer,
-                                   AtomicBoolean readFailed) {
+    private static void readOutput(Process process, List<String> retained, Consumer<String> lineConsumer) {
         try (InputStream inputStream = process.getInputStream();
              InputStreamReader isr = new InputStreamReader(inputStream, CHARSET);
              BufferedReader br = new BufferedReader(isr)) {
@@ -169,7 +236,6 @@ public final class ProcessRunner {
             }
         } catch (IOException e) {
             // 进程被强杀时流会异常关闭，属于预期情况
-            readFailed.set(true);
         }
     }
 
