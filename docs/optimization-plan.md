@@ -43,8 +43,11 @@
 | 27 | `docs:` README 增加「怎么复现这些数字」，并修正一处不准确的表述 |
 | 28 | `chore:` 面试准备笔记也加入忽略（本地草稿，不提交） |
 | 29 | `chore:` 二创新增的 9 个类改用本人署名 |
+| 30 | `chore(build):` 重建前端产物，界面内的品牌文字生效 |
+| 31 | `fix(redis):` Redis 不可达时不再拖垮应用启动 |
 
 > 第 29 条只改**本次改造新增的类**的 `@author`，见第三节「署名纪律」。
+> 第 31 条是**收尾阶段实测发现的新缺陷**，不是原计划项 —— 详细经过见阶段 D 的 D5。
 
 ### 已验证的关键事实（改造的依据）
 
@@ -115,6 +118,11 @@
 | D2 | `feat(redis): 转码去重改用分布式锁` | 去掉单机 `ConcurrentHashMap` 的局限：多实例下同一文件会被重复转码 | 双实例实测：同一文件同时提交 → 一个 `SUBMITTED`、另一个 `ALREADY_IN_PROGRESS`，实际只有 1 次 `start videoConvert`；锁在转码期间持有（TTL 1800）、完成即释放、零释放告警 | ✅ |
 | D3 | `feat(redis): 配置变更经 Redis Pub/Sub 广播到所有实例` | 项目已有 `ConfigChangeEvent` + `ApplicationListener`（FtpConfig 就靠它重建），**但只在本机生效** —— 用 Pub/Sub 补上跨实例那半边 | 双实例实测：只改 A 的配置 → B 日志出现组件重建 + 「已应用来自实例…的配置变更」，且 B 的 GET 返回新配置（未重启、未手工同步） | ✅ |
 | D4 | `fix(config): 配置热更新改原子快照切换` | 现在 destroy+init 非原子，其它线程仍在读同一批非线程安全 Map | 并发改配置 + 读配置不出异常 | ⬜ |
+| D5 | `fix(redis): Redis 不可达时不再拖垮应用启动` | **收尾时实测发现的新缺陷**：D1 的降级只做对了一半 —— 连接自检包了 `try/catch`，但 `startConfigSubscription()` 没有，而 `RedisMessageListenerContainer.start()` 会**同步**取连接，不可达时抛出的异常穿出 `@PostConstruct`，Spring 取消整个刷新，**应用连首页都打不开**。原注释"Lettuce 是懒连接，所以不会启动失败"只对 `redisTemplate` 成立 | 三场景实测：不可达 → 修复前 `Application run failed`、修复后 `Started in 4.834s` + WARN；可达 → `Started in 5.15s` + PONG + 已订阅；从未配置 → `Started in 4.222s`。三者 `/health` 均 200 | ✅ |
+
+> **D5 值得单独记一笔**：D1 当时写的验证是"配了不可达 → 仅 WARN"，但那次没有真正跑到
+> 「**先配好 Redis、再把 Redis 关掉**」这条路径上，所以漏掉了。降级分支是**读代码看不出来**的，
+> 只能靠实测 —— 这也是为什么本次收尾没有只做前端重建，而是把应用真的跑起来。
 
 ### 阶段 E：MQ
 
@@ -132,6 +140,7 @@
 | F2 | `chore: 项目改名` | **只改外衣**：README / Dockerfile / CI / 前端标题；⛔ 不动包名 `top.itning.yunshunas.*`（94 个文件）与原项目文件的 `@author itning`（Apache-2.0 义务） | ✅ |
 | F3 | `docs: 前后对比证据归档` | 改后数字与「怎么复现」并入 README，单独的逐项分析落在 `docs/analysis/`；`.baseline/out/` 原始输出保留在本地作底稿 | ✅ |
 | F4 | `chore: 新增类改用本人署名` | 新增类的 `@author` 与原作者署名分开：`ProcessRunner`、`RedisDistributedLock`、`NasRedisConfig`、`NasRedisProperties`、`ConfigBroadcaster`、`RemoteConfigChangeEvent`、`TranscodeMqConfig`、`TranscodeConsumer`、`PageResult` 共 9 个改署本人；**原项目文件的 `@author itning` 一个未动**（99−9=90 个仍保留） | ✅ |
+| F5 | `chore(build): 重建前端产物` | 源码在 F2 已改名，但已提交的构建产物没重新生成，界面里仍是旧名（旧产物里是转义形式 `\u4E91\u8212NAS`）。`npm ci` + `ng build` 重建，产物写入 `nas-deploy/src/main/resources/static` | 实测：旧产物含 `云舒NAS`、新产物为 0 且含 `MediaVault`；浏览器实测侧边栏显示 `MediaVault`，菜单与文件列表正常渲染；`\u817E\u8BAF\u4E91`（腾讯云）与包名按纪律保留 | ✅ |
 
 ---
 
