@@ -26,6 +26,7 @@
 | 10 | `fix(download):` aria2c 子进程停机回收 |
 | 11 | `fix(download):` aria2c RPC 鉴权与监听范围 |
 | 12 | `fix(socket):` 进度推送的线程安全与节流 |
+| 13 | `fix(music):` 删除冗余索引 index_music_id |
 
 ### 已验证的关键事实（改造的依据）
 
@@ -64,7 +65,7 @@
 
 | # | 提交 | 目标 | 验证方式 | 状态 |
 |---|---|---|---|---|
-| B1 | `fix(music): 删除冗余索引 index_music_id` | 与 `UK_music_id` 同列重复，白白拖慢写入 | `SHOW INDEX` 前后对比 | ⬜ |
+| B1 | `fix(music): 删除冗余索引 index_music_id` | 与 `UK_music_id` 同列重复，每次写入都要多维护一份 B+ 树 | 删除前后比对 `EXPLAIN`：计划逐列完全一致（优化器本来就没用过它）+ 新增存量库迁移脚本 | ✅ |
 | B2 | `feat(music): 新增 (name,singer,type) 联合索引` | 消除 Q7 全表扫描 | `EXPLAIN`：`ALL` → `ref`，`rows` 49928 → 个位数 | ⬜ |
 | B3 | `feat(music): 新增 gmt_create 索引` | 消除 `ORDER BY gmt_create DESC` 的 filesort | `EXPLAIN`：`Using filesort` 消失 | ⬜ |
 | B4 | `feat(music): 新增分页接口` | 列表接口无分页（单次返回 17.93 MB） | 响应体积与耗时前后对比 | ⬜ |
