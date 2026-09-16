@@ -23,7 +23,7 @@ import java.util.function.Consumer;
  *     <li><b>中断</b>：调用线程被中断时回收子进程并复位中断标志，不吞中断。</li>
  * </ol>
  *
- * @author itning
+ * @author 78HUA
  */
 public final class ProcessRunner {
 

@@ -10,7 +10,7 @@ import lombok.Data;
  * 与项目里的 Elasticsearch 配置同一套模式：存在内嵌 SQLite 的 setting 表里，
  * 通过设置接口读写，未配置时不启用任何 Redis 能力。
  *
- * @author itning
+ * @author 78HUA
  */
 @Data
 @JsonIgnoreProperties(ignoreUnknown = true)

@@ -28,7 +28,7 @@ import java.util.List;
  *             yunshu.transcode.dlx ──► yunshu.transcode.dlq
  * </pre>
  *
- * @author itning
+ * @author 78HUA
  */
 @Configuration
 @ConditionalOnProperty(prefix = "nas.mq", name = "enabled", havingValue = "true")

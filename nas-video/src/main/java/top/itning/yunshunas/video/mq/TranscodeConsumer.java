@@ -22,7 +22,7 @@ import java.io.IOException;
  *         直接重投会让失败消息立刻被再次消费，形成死循环。</li>
  * </ul>
  *
- * @author itning
+ * @author 78HUA
  */
 @Slf4j
 @Component

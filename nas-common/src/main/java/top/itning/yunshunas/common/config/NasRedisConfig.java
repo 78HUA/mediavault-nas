@@ -34,7 +34,7 @@ import java.util.Objects;
  * <code>afterPropertiesSet()</code> 与 <code>destroy()</code>。
  * Lettuce 是懒连接，所以 Redis 没启动也不会导致应用启动失败，只会在真正使用时报错。
  *
- * @author itning
+ * @author 78HUA
  */
 @Slf4j
 @Configuration

@@ -22,7 +22,7 @@ import java.util.UUID;
  * <b>降级策略：</b>Redis 未启用或不可用时一律**放行**，由调用方自己的本机去重兜底。
  * 中间件故障不应该让业务直接不可用。
  *
- * @author itning
+ * @author 78HUA
  */
 @Slf4j
 @Component

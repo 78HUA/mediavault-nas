@@ -9,7 +9,7 @@ import org.springframework.context.ApplicationEvent;
  * 由本机的设置接口触发；本事件表示「收到了别的实例广播过来的配置变更」，
  * 需要在本机落库并触发同样的本地重建流程。
  *
- * @author itning
+ * @author 78HUA
  */
 public class RemoteConfigChangeEvent extends ApplicationEvent {
 

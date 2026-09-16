@@ -28,7 +28,7 @@ import java.util.UUID;
  * </ul>
  * 未启用 Redis 时两个方向都不做事，退化为原先的单机行为。
  *
- * @author itning
+ * @author 78HUA
  */
 @Slf4j
 @Component

@@ -8,7 +8,7 @@ import java.util.List;
  * 分页结果
  *
  * @param <T> 条目类型
- * @author itning
+ * @author 78HUA
  */
 @Data
 public class PageResult<T> {
