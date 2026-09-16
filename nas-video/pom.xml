@@ -24,5 +24,11 @@
             <groupId>net.minidev</groupId>
             <artifactId>json-smart</artifactId>
         </dependency>
+        <!-- 转码队列的 MQ 实现（可选增强）：默认关闭，由 nas.mq.enabled 控制。
+             关闭时不声明队列、不建立连接，行为与纯内存队列完全一致。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
     </dependencies>
 </project>

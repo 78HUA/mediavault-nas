@@ -4,9 +4,12 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import top.itning.yunshunas.common.lock.RedisDistributedLock;
 import top.itning.yunshunas.common.socket.ProgressWebSocket;
+import top.itning.yunshunas.video.mq.TranscodeMqConfig;
 import top.itning.yunshunas.video.repository.IVideoRepository;
 
 import java.io.File;
@@ -87,6 +90,11 @@ public class VideoTransformHandler {
     private final Video2M3u8Helper video2M3u8Helper;
     private final IVideoRepository iVideoRepository;
     private final RedisDistributedLock redisDistributedLock;
+    private final RabbitTemplate rabbitTemplate;
+    /**
+     * 是否把任务投递到 MQ 而不是进程内队列（由 nas.mq.enabled 控制，默认关闭）
+     */
+    private final boolean mqEnabled;
     private final ThreadPoolExecutor transformExecutorService;
     private final Video2M3u8Helper.Progress progress;
     /**
@@ -103,10 +111,13 @@ public class VideoTransformHandler {
     private final AtomicLong lastProgressPushAt = new AtomicLong();
 
     public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository,
-                                 RedisDistributedLock redisDistributedLock) {
+                                 RedisDistributedLock redisDistributedLock, RabbitTemplate rabbitTemplate,
+                                 @Value("${nas.mq.enabled:false}") boolean mqEnabled) {
         this.video2M3u8Helper = video2M3u8Helper;
         this.iVideoRepository = iVideoRepository;
         this.redisDistributedLock = redisDistributedLock;
+        this.rabbitTemplate = rabbitTemplate;
+        this.mqEnabled = mqEnabled;
         int processors = Runtime.getRuntime().availableProcessors();
         // 转码的实际计算力来自 ffmpeg 子进程，且 ffmpeg 自身就是多线程的。
         // 外层再按核数并发会让线程总量远超核数（实测 12 并发比串行慢约 9 倍），故取核数一半。
@@ -179,6 +190,9 @@ public class VideoTransformHandler {
         if (m3u8File.exists()) {
             return SubmitResult.ALREADY_DONE;
         }
+        if (mqEnabled) {
+            return publishTranscodeTask(location);
+        }
         // 本机原子去重：add 返回 false 说明本机已在途（正在转码或已在队列）
         if (!inFlight.add(location)) {
             return SubmitResult.ALREADY_IN_PROGRESS;
@@ -195,10 +209,7 @@ public class VideoTransformHandler {
         try {
             transformExecutorService.execute(() -> {
                 try {
-                    if (!video2M3u8Helper.videoConvert(location, writeDir, locationMd5, progress)) {
-                        long failed = failedCount.incrementAndGet();
-                        logger.warn("转码失败 file={}（累计失败 {}）", location, failed);
-                    }
+                    transcode(location, writeDir, locationMd5);
                 } finally {
                     redisDistributedLock.unlock(lockToken);
                     inFlight.remove(location);
@@ -213,6 +224,79 @@ public class VideoTransformHandler {
         }
         submittedCount.incrementAndGet();
         return SubmitResult.SUBMITTED;
+    }
+
+    /**
+     * 供 MQ 消费者调用：执行一次转码
+     * <p>
+     * 与「提交」分开，是因为启用 MQ 后任务先落到 RabbitMQ，真正干活的可能是**另一个实例**的消费者；
+     * 此时才应该抢分布式锁 —— 生产者并不持有锁。
+     *
+     * @param location 视频文件路径
+     * @return <code>true</code> 表示无需重试（转好了、产物已存在、或别的实例正在/已经处理）；
+     *         <code>false</code> 表示本次确实转码失败
+     */
+    public boolean transcodeIfNeeded(String location) {
+        String writeDir = iVideoRepository.getWriteDir(location);
+        String locationMd5 = iVideoRepository.getLocationMd5(location);
+        if (new File(writeDir + File.separator + locationMd5 + ".m3u8").exists()) {
+            // 幂等：消息可能被重复投递，产物已存在就直接跳过
+            logger.info("转码产物已存在，跳过：{}", location);
+            return true;
+        }
+        if (!inFlight.add(location)) {
+            logger.info("本机已在转码，跳过：{}", location);
+            return true;
+        }
+        Optional<RedisDistributedLock.LockToken> lock = redisDistributedLock.tryLock(
+                TRANSCODE_LOCK_PREFIX + locationMd5, TRANSCODE_LOCK_TTL);
+        if (lock.isEmpty()) {
+            inFlight.remove(location);
+            logger.info("该文件正在被其它实例转码，跳过：{}", location);
+            return true;
+        }
+        try {
+            return transcode(location, writeDir, locationMd5);
+        } finally {
+            redisDistributedLock.unlock(lock.get());
+            inFlight.remove(location);
+        }
+    }
+
+    /**
+     * 投递任务到 RabbitMQ
+     *
+     * @param location 视频文件路径
+     * @return 提交结果
+     */
+    private SubmitResult publishTranscodeTask(String location) {
+        try {
+            // 队列持久化 + 消息默认持久化，重启不丢；投递失败则让调用方退避重试
+            rabbitTemplate.convertAndSend(TranscodeMqConfig.TRANSCODE_QUEUE, location);
+            submittedCount.incrementAndGet();
+            logger.info("转码任务已投递到 MQ：{}", location);
+            return SubmitResult.SUBMITTED;
+        } catch (Exception e) {
+            logger.error("投递转码任务到 MQ 失败：{}", location, e);
+            return SubmitResult.REJECTED;
+        }
+    }
+
+    /**
+     * 真正执行一次转码，并统计失败
+     *
+     * @param location     视频文件路径
+     * @param writeDir     输出目录
+     * @param locationMd5  路径 MD5
+     * @return 是否成功
+     */
+    private boolean transcode(String location, String writeDir, String locationMd5) {
+        if (video2M3u8Helper.videoConvert(location, writeDir, locationMd5, progress)) {
+            return true;
+        }
+        long failed = failedCount.incrementAndGet();
+        logger.warn("转码失败 file={}（累计失败 {}）", location, failed);
+        return false;
     }
 
     /**
