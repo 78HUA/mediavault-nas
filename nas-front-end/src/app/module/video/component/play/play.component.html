@@ -7,5 +7,37 @@
       </nz-breadcrumb-item>
     }
   </nz-breadcrumb>
+
+  <div class="player-toolbar">
+    <button nz-button nzSize="small"
+            [nzType]="playingHls ? 'default' : 'primary'"
+            (click)="playRaw()">原文件</button>
+    <button nz-button nzSize="small"
+            [nzType]="playingHls ? 'primary' : 'default'"
+            [disabled]="!hasHls()"
+            (click)="playHls()">转码版本</button>
+    <button nz-button nzSize="small"
+            [nzLoading]="transcoding"
+            [disabled]="transcoding"
+            (click)="requestTranscode()">{{hasHls() ? '重新转码' : '转码后播放'}}</button>
+    <span class="player-tip">
+      @if (hasHls()) {
+        转码产物已就绪，可切换播放
+      } @else if (transcoding) {
+        正在转码，完成后会自动切换
+      } @else {
+        浏览器放不了的格式（mkv / rmvb 等）可先转码
+      }
+    </span>
+  </div>
+
+  @if (playbackFailed && !playingHls) {
+    <div class="player-hint">
+      浏览器无法直接播放这个文件 —— 容器或编码不兼容，而这一点只看后缀是判断不出来的
+      （所以列表页会把它标成「可播放」）。点上面的「转码后播放」，转码完成后会自动切换到
+      能在线播放的版本。
+    </div>
+  }
+
   <div #videoPlayerElement></div>
 </div>

@@ -20,6 +20,7 @@
     "@angular/router": "^22.1.5",
     "dayjs": "^1.11.23",
     "dplayer": "^1.27.1",
+    "hls.js": "^1.7.3",
     "js-base64": "^3.9.3",
     "music-metadata-browser": "2.5.11",
     "ng-zorro-antd": "^22.0.1",

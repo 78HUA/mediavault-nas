@@ -1,3 +1,31 @@
 nz-breadcrumb {
   margin-bottom: 8px;
 }
+
+.player-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  button {
+    margin-right: 0;
+  }
+}
+
+.player-tip {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+}
+
+.player-hint {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid #ffe58f;
+  border-radius: 4px;
+  background-color: #fffbe6;
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 13px;
+  line-height: 1.6;
+}
