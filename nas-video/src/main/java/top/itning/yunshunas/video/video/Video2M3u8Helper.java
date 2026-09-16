@@ -194,7 +194,8 @@ public class Video2M3u8Helper {
             command.add(copy);
             command.add("-codec");
             command.add("copy");
-            command.add("-vbsf");
+            // -vbsf 已被 ffmpeg 移除（5.0 起），需使用 -bsf:v
+            command.add("-bsf:v");
             command.add("h264_mp4toannexb");
             command.add("-map");
             command.add("0");

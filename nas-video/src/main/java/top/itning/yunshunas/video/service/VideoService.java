@@ -37,4 +37,12 @@ public interface VideoService {
      * @return 文件列表
      */
     List<FileEntity> getFileEntities(String location);
+
+    /**
+     * 判断文件名是否为支持的视频格式
+     *
+     * @param name 文件名（含扩展名）
+     * @return 是支持的视频格式返回 <code>true</code>
+     */
+    boolean isVideoFile(String name);
 }
