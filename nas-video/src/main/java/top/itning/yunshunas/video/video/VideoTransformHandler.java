@@ -5,12 +5,15 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import top.itning.yunshunas.common.lock.RedisDistributedLock;
 import top.itning.yunshunas.common.socket.ProgressWebSocket;
 import top.itning.yunshunas.video.repository.IVideoRepository;
 
 import java.io.File;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -45,6 +48,21 @@ public class VideoTransformHandler {
     private static final long PROGRESS_PUSH_INTERVAL_MS = 500L;
 
     /**
+     * 转码分布式锁的键前缀
+     */
+    private static final String TRANSCODE_LOCK_PREFIX = "yunshu:transcode:lock:";
+
+    /**
+     * 转码分布式锁的存活时间。
+     * <p>
+     * 正常结束或失败都会在 finally 中显式释放，只有进程被强杀时才会残留，最长这么久后自动过期。
+     * 取值明显大于单个文件转码的正常耗时，避免「还在转却被误判为锁已过期」；
+     * 反过来，若真有文件转码超过这个时长，锁会在中途过期并可能被另一实例重复转 ——
+     * 这种情况下正确的做法是加锁续期（看门狗），本项目未实现，此处如实记录。
+     */
+    private static final Duration TRANSCODE_LOCK_TTL = Duration.ofMinutes(30);
+
+    /**
      * 提交结果
      */
     public enum SubmitResult {
@@ -68,6 +86,7 @@ public class VideoTransformHandler {
 
     private final Video2M3u8Helper video2M3u8Helper;
     private final IVideoRepository iVideoRepository;
+    private final RedisDistributedLock redisDistributedLock;
     private final ThreadPoolExecutor transformExecutorService;
     private final Video2M3u8Helper.Progress progress;
     /**
@@ -83,9 +102,11 @@ public class VideoTransformHandler {
      */
     private final AtomicLong lastProgressPushAt = new AtomicLong();
 
-    public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository) {
+    public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository,
+                                 RedisDistributedLock redisDistributedLock) {
         this.video2M3u8Helper = video2M3u8Helper;
         this.iVideoRepository = iVideoRepository;
+        this.redisDistributedLock = redisDistributedLock;
         int processors = Runtime.getRuntime().availableProcessors();
         // 转码的实际计算力来自 ffmpeg 子进程，且 ffmpeg 自身就是多线程的。
         // 外层再按核数并发会让线程总量远超核数（实测 12 并发比串行慢约 9 倍），故取核数一半。
@@ -158,10 +179,19 @@ public class VideoTransformHandler {
         if (m3u8File.exists()) {
             return SubmitResult.ALREADY_DONE;
         }
-        // 原子去重：add 返回 false 说明已在途（正在转码或已在队列）
+        // 本机原子去重：add 返回 false 说明本机已在途（正在转码或已在队列）
         if (!inFlight.add(location)) {
             return SubmitResult.ALREADY_IN_PROGRESS;
         }
+        // 跨实例去重：加分布式锁。Redis 未启用或不可用时会放行，由上面的本机去重兜底
+        Optional<RedisDistributedLock.LockToken> lock = redisDistributedLock.tryLock(
+                TRANSCODE_LOCK_PREFIX + locationMd5, TRANSCODE_LOCK_TTL);
+        if (lock.isEmpty()) {
+            inFlight.remove(location);
+            logger.info("该文件正在被其它实例转码，忽略本次提交：{}", location);
+            return SubmitResult.ALREADY_IN_PROGRESS;
+        }
+        RedisDistributedLock.LockToken lockToken = lock.get();
         try {
             transformExecutorService.execute(() -> {
                 try {
@@ -170,10 +200,12 @@ public class VideoTransformHandler {
                         logger.warn("转码失败 file={}（累计失败 {}）", location, failed);
                     }
                 } finally {
+                    redisDistributedLock.unlock(lockToken);
                     inFlight.remove(location);
                 }
             });
         } catch (RejectedExecutionException e) {
+            redisDistributedLock.unlock(lockToken);
             inFlight.remove(location);
             long rejected = rejectedCount.incrementAndGet();
             logger.warn("转码队列已满，拒绝任务：{}（累计拒绝 {} 个）", location, rejected);
