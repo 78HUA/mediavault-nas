@@ -41,3 +41,6 @@ application-nas.properties
 HANDOFF.md
 INTERVIEW-NOTES.md
 .baseline/
+
+### 前端本地 npm 缓存（本机全局缓存目录不可写，npm install 时用 --cache 指到项目内）###
+nas-front-end/.npm-cache/
