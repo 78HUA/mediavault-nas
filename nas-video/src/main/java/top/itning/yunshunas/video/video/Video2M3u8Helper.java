@@ -233,10 +233,39 @@ public class Video2M3u8Helper {
         } catch (Exception e) {
             // 原先只落 debug 日志且不带堆栈，转码失败在默认日志级别下完全不可见
             logger.error("视频转码失败 file={} toPath={} fileName={}", fromFile, toPath, fileName, e);
+            // 清掉残缺产物：ffmpeg 的 segment 封装器是边转边写 .m3u8 的，
+            // 中途失败会留下「文件存在但内容不全」的 m3u8，
+            // 而「m3u8 存在即已完成」的判据会把它当成成品，导致该文件永远无法重转。
+            cleanupPartialArtifacts(toPath, fileName, fromFile);
             if (progress != null) {
                 progress.onError(e, fromFile, toPath, fileName);
             }
             return false;
+        }
+    }
+
+    /**
+     * 清理一次转码留下的残缺产物：m3u8、分片 ts，以及标准化阶段的中间 mp4
+     *
+     * @param toPath   目标目录
+     * @param fileName 文件名（不要扩展名）
+     * @param fromFile 源文件
+     */
+    private void cleanupPartialArtifacts(String toPath, String fileName, String fromFile) {
+        File[] files = new File(toPath).listFiles();
+        if (files == null) {
+            return;
+        }
+        String tsPrefix = fileName + "-";
+        String intermediateMp4 = DigestUtils.md5DigestAsHex(fromFile.getBytes()) + ".mp4";
+        for (File file : files) {
+            String name = file.getName();
+            boolean isPartial = name.equals(fileName + ".m3u8")
+                    || (name.startsWith(tsPrefix) && name.endsWith(".ts"))
+                    || name.equals(intermediateMp4);
+            if (isPartial && !file.delete()) {
+                logger.warn("清理转码残留文件失败：{}", file.getPath());
+            }
         }
     }
 
