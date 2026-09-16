@@ -13,6 +13,7 @@ import top.itning.yunshunas.music.dto.MusicChangeDTO;
 import top.itning.yunshunas.music.dto.MusicDTO;
 import top.itning.yunshunas.music.dto.MusicManageDTO;
 import top.itning.yunshunas.music.dto.MusicMetaInfo;
+import top.itning.yunshunas.music.dto.PageResult;
 import top.itning.yunshunas.music.entity.Music;
 import top.itning.yunshunas.music.repository.MusicRepository;
 import top.itning.yunshunas.music.service.MusicManageService;
@@ -52,13 +53,32 @@ public class MusicManageServiceImpl implements MusicManageService {
 
     @Override
     public List<MusicManageDTO> getMusicList() {
-        return musicRepository.findAll().stream().map(item -> {
-            MusicManageDTO musicManageDTO = MusicConverter.INSTANCE.music2ManageDto(item);
-            musicManageDTO.setMusicUri(musicDataSource.getMusic(musicManageDTO.getMusicId()));
-            musicManageDTO.setLyricUri(lyricDataSource.getLyric(musicManageDTO.getLyricId()));
-            musicManageDTO.setCoverUri(coverDataSource.getCover(musicManageDTO.getMusicId()));
-            return musicManageDTO;
-        }).collect(Collectors.toList());
+        return musicRepository.findAll().stream()
+                .map(this::toManageDto)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public PageResult<MusicManageDTO> getMusicPage(int page, int size) {
+        long offset = (long) (page - 1) * size;
+        List<MusicManageDTO> items = musicRepository.findPage(offset, size).stream()
+                .map(this::toManageDto)
+                .collect(Collectors.toList());
+        return PageResult.of(page, size, musicRepository.countAll(), items);
+    }
+
+    /**
+     * 实体转管理端 DTO，并补齐三个资源地址
+     *
+     * @param music 音乐实体
+     * @return 管理端 DTO
+     */
+    private MusicManageDTO toManageDto(Music music) {
+        MusicManageDTO musicManageDTO = MusicConverter.INSTANCE.music2ManageDto(music);
+        musicManageDTO.setMusicUri(musicDataSource.getMusic(musicManageDTO.getMusicId()));
+        musicManageDTO.setLyricUri(lyricDataSource.getLyric(musicManageDTO.getLyricId()));
+        musicManageDTO.setCoverUri(coverDataSource.getCover(musicManageDTO.getMusicId()));
+        return musicManageDTO;
     }
 
     @Override

@@ -13,6 +13,7 @@ import top.itning.yunshunas.music.datasource.impl.TencentCosDataSource;
 import top.itning.yunshunas.music.dto.MusicChangeDTO;
 import top.itning.yunshunas.music.dto.MusicDTO;
 import top.itning.yunshunas.music.dto.MusicManageDTO;
+import top.itning.yunshunas.music.dto.PageResult;
 import top.itning.yunshunas.music.service.MusicManageService;
 import top.itning.yunshunas.music.service.MusicService;
 import top.itning.yunshunas.music.service.SearchService;
@@ -32,6 +33,13 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/music")
 public class MusicManageApiController {
+
+    /**
+     * 每页条数上限。必须设上限：否则调用方传一个很大的 size 就能把响应体重新拉回几十 MB，
+     * 等于把「一次返回全表」的问题从方法内部挪到了接口参数上。
+     */
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final MusicManageService musicManageService;
     private final MusicService musicService;
     private final SearchService searchService;
@@ -56,6 +64,25 @@ public class MusicManageApiController {
     @GetMapping("/list")
     public ResponseEntity<RestModel<List<MusicManageDTO>>> musicList() {
         return RestModel.ok(musicManageService.getMusicList());
+    }
+
+    /**
+     * 分页获取音乐
+     * <p>
+     * 与 {@link #musicList()} 的关系：后者为兼容已发布的前端而保留（返回完整数组），
+     * 本接口是新的分页入口，返回 {@link PageResult}。
+     *
+     * @param page 页码，从 1 开始
+     * @param size 每页条数，上限 {@value #MAX_PAGE_SIZE}
+     * @return 分页结果
+     */
+    @GetMapping("/page")
+    public ResponseEntity<RestModel<PageResult<MusicManageDTO>>> musicPage(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        return RestModel.ok(musicManageService.getMusicPage(safePage, safeSize));
     }
 
     /**

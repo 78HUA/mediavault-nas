@@ -3,6 +3,7 @@ package top.itning.yunshunas.music.service;
 import top.itning.yunshunas.music.dto.MusicChangeDTO;
 import top.itning.yunshunas.music.dto.MusicDTO;
 import top.itning.yunshunas.music.dto.MusicManageDTO;
+import top.itning.yunshunas.music.dto.PageResult;
 
 import java.util.List;
 
@@ -19,6 +20,15 @@ public interface MusicManageService {
      * @return 音乐信息
      */
     List<MusicManageDTO> getMusicList();
+
+    /**
+     * 分页查找全部音乐
+     *
+     * @param page 页码，从 1 开始
+     * @param size 每页条数
+     * @return 分页结果
+     */
+    PageResult<MusicManageDTO> getMusicPage(int page, int size);
 
     /**
      * 模糊搜索：搜索音乐名和歌手名，只要包含关键字就返回

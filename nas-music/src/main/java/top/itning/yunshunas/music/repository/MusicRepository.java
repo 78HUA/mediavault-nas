@@ -18,6 +18,22 @@ public interface MusicRepository {
 
     List<Music> findAll();
 
+    /**
+     * 分页查询（按 gmt_create 倒序）
+     *
+     * @param offset 偏移量
+     * @param limit  每页条数
+     * @return 当前页数据
+     */
+    List<Music> findPage(long offset, int limit);
+
+    /**
+     * 统计总条数
+     *
+     * @return 总条数
+     */
+    long countAll();
+
     List<Music> findAllByNameLikeOrSingerLike(String name, String singer);
 
     List<Music> findAllByNameLike(String name);

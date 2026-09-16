@@ -92,6 +92,18 @@ public class MusicRepositoryImpl extends AbstractRepository implements MusicRepo
     }
 
     @Override
+    public List<Music> findPage(long offset, int limit) {
+        return getJdbcTemplate().query("SELECT * FROM music ORDER BY gmt_create DESC LIMIT ? OFFSET ?",
+                new BeanPropertyRowMapper<>(Music.class), limit, offset);
+    }
+
+    @Override
+    public long countAll() {
+        Long count = getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM music", Long.class);
+        return Objects.isNull(count) ? 0L : count;
+    }
+
+    @Override
     public List<Music> findAllByNameLikeOrSingerLike(String name, String singer) {
         return getJdbcTemplate().query("SELECT * FROM music WHERE name LIKE ? OR singer LIKE ? ORDER BY gmt_create DESC", ps -> {
             ps.setString(1, name);
