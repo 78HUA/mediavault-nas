@@ -32,7 +32,12 @@ import java.util.Objects;
  * <p>
  * 连接工厂与模板是手工创建的，不走容器生命周期，因此必须自己触发
  * <code>afterPropertiesSet()</code> 与 <code>destroy()</code>。
- * Lettuce 是懒连接，所以 Redis 没启动也不会导致应用启动失败，只会在真正使用时报错。
+ * <p>
+ * <b>降级的边界（实测得出，与直觉相反）：</b>只靠 Lettuce 的懒连接并不够。
+ * {@code RedisMessageListenerContainer.start()} 会**同步**取一次连接，
+ * Redis 不可达时它直接抛 {@code RedisConnectionFailureException}；
+ * 这个异常若穿出 {@code @PostConstruct}，Spring 会判定该 bean 创建失败并取消整个刷新，
+ * 结果是 —— 应用根本起不来，而不是"Redis 功能不可用"。所以订阅的启动必须单独兜住。
  *
  * @author 78HUA
  */
@@ -82,9 +87,17 @@ public class NasRedisConfig implements ApplicationListener<ConfigChangeEvent> {
         } catch (Exception e) {
             log.warn("Redis 连接自检失败，配置已保存但当前不可用：{}", e.getMessage());
         }
-        // 无论自检是否通过都启动订阅：RedisMessageListenerContainer 会在后台重连，
-        // Redis 稍后恢复时能自动订阅上，不必重启应用
-        startConfigSubscription();
+        // 无论自检是否通过都尝试启动订阅：Redis 可达时正常订阅上；
+        // 不可达时 start() 会同步抛异常，但**绝不能让它穿出 @PostConstruct** ——
+        // 那会让整个 Spring 容器取消启动，应用连首页都打不开。
+        // 代价是：订阅失败后本实例不再接收配置广播，Redis 恢复也不会自动补上（需重启）；
+        // 分布式锁不受影响，它是每次调用即时判断、失败即放行。
+        try {
+            startConfigSubscription();
+        } catch (Exception e) {
+            log.warn("订阅配置变更频道失败，本实例不启用配置广播（Redis 恢复后需重启才能补上）：{}", e.getMessage());
+            stopListenerContainer();
+        }
     }
 
     /**
@@ -109,21 +122,32 @@ public class NasRedisConfig implements ApplicationListener<ConfigChangeEvent> {
 
     @PreDestroy
     public void destroy() {
-        if (Objects.nonNull(listenerContainer)) {
-            try {
-                listenerContainer.stop();
-                listenerContainer.destroy();
-            } catch (Exception e) {
-                // DisposableBean#destroy 声明了 throws Exception；停机阶段的清理失败不应影响关闭流程
-                log.warn("停止配置变更订阅失败：{}", e.getMessage());
-            }
-            listenerContainer = null;
-        }
+        stopListenerContainer();
         if (Objects.nonNull(connectionFactory)) {
             connectionFactory.destroy();
         }
         connectionFactory = null;
         redisTemplate = null;
+    }
+
+    /**
+     * 停掉订阅容器并清掉引用
+     * <p>
+     * 既用于正常停机，也用于订阅启动失败后的现场清理 ——
+     * 半初始化的容器仍握着连接工厂，留着只会掩盖问题。
+     */
+    private void stopListenerContainer() {
+        if (Objects.isNull(listenerContainer)) {
+            return;
+        }
+        try {
+            listenerContainer.stop();
+            listenerContainer.destroy();
+        } catch (Exception e) {
+            // DisposableBean#destroy 声明了 throws Exception；停机阶段的清理失败不应影响关闭流程
+            log.warn("停止配置变更订阅失败：{}", e.getMessage());
+        }
+        listenerContainer = null;
     }
 
     @Override
