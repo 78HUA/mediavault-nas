@@ -131,6 +131,21 @@ public class FileController {
     }
 
     /**
+     * 查询某个视频的转码产物状态
+     * <p>
+     * 播放页用它决定「播原文件」还是「播转码产物」。与 {@link #transcode(String)} 的区别是
+     * 本接口只读、不会触发转码，可以放心轮询。
+     *
+     * @param location 视频文件路径
+     * @return 产物是否就绪、播放地址，以及是否正在转码
+     */
+    @GetMapping("/transcode/info")
+    @ResponseBody
+    public ResponseEntity<RestModel<Map<String, Object>>> transcodeInfo(@RequestParam String location) {
+        return RestModel.ok(videoTransformHandler.info(location));
+    }
+
+    /**
      * 查询转码队列与线程池状态
      *
      * @return 线程池与待转码队列快照

@@ -15,6 +15,7 @@ import top.itning.yunshunas.video.repository.IVideoRepository;
 import java.io.File;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -297,6 +298,34 @@ public class VideoTransformHandler {
         long failed = failedCount.incrementAndGet();
         logger.warn("转码失败 file={}（累计失败 {}）", location, failed);
         return false;
+    }
+
+    /**
+     * 查询某个视频的 HLS 产物状态
+     * <p>
+     * 播放页用它决定「播原文件」还是「播转码产物」。这里只拼产物路径做存在性判断，
+     * 不调用 {@link IVideoRepository#getWriteDir(String)} —— 那个方法会顺手 mkdirs，
+     * 一个查询接口不应该有副作用。
+     *
+     * @param location 视频文件路径
+     * @return 产物是否就绪、播放地址，以及是否正在转码
+     */
+    public Map<String, Object> info(String location) {
+        String locationMd5 = iVideoRepository.getLocationMd5(location);
+        boolean ready = false;
+        try {
+            ready = new File(iVideoRepository.readM3U8File(locationMd5)).isFile();
+        } catch (Exception e) {
+            // 输出目录尚未配置等情况：按「产物不存在」处理，而不是让查询接口直接报错
+            logger.debug("查询 HLS 产物失败，按未就绪处理：{}", location, e);
+        }
+        Map<String, Object> infoMap = new LinkedHashMap<>(5);
+        infoMap.put("location", location);
+        infoMap.put("locationMd5", locationMd5);
+        infoMap.put("hlsReady", ready);
+        infoMap.put("m3u8Url", "/hls/" + locationMd5 + ".m3u8");
+        infoMap.put("transcoding", inFlight.contains(location));
+        return infoMap;
     }
 
     /**
