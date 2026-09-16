@@ -28,6 +28,7 @@
 | 12 | `fix(socket):` 进度推送的线程安全与节流 |
 | 13 | `fix(music):` 删除冗余索引 index_music_id |
 | 14 | `feat(music):` 新增 (name,singer,type) 联合索引 |
+| 15 | `feat(music):` 新增 gmt_create 索引 |
 
 ### 已验证的关键事实（改造的依据）
 
@@ -68,7 +69,7 @@
 |---|---|---|---|---|
 | B1 | `fix(music): 删除冗余索引 index_music_id` | 与 `UK_music_id` 同列重复，每次写入都要多维护一份 B+ 树 | 删除前后比对 `EXPLAIN`：计划逐列完全一致（优化器本来就没用过它）+ 新增存量库迁移脚本 | ✅ |
 | B2 | `feat(music): 新增 (name,singer,type) 联合索引` | 消除 Q7 全表扫描（三个等值条件原本一个索引都没有） | 同一条件下成对测 5 次：计划 `ALL`→`ref`、`rows` 49928→2、耗时中位数 20.1 ms→0.064 ms（约 300 倍） | ✅ |
-| B3 | `feat(music): 新增 gmt_create 索引` | 消除 `ORDER BY gmt_create DESC` 的 filesort | `EXPLAIN`：`Using filesort` 消失 | ⬜ |
+| B3 | `feat(music): 新增 gmt_create 索引` | 为 `ORDER BY gmt_create DESC` 提供有序访问路径 | 成对实测：**无 LIMIT 时执行计划完全不变**（仍 `ALL`+`filesort`）；加 `LIMIT 100` 后转为 `type=index` + `Backward index scan`、`filesort` 消失、25 ms → 约 0.2 ms。**该索引需配合 B4 分页才发挥价值** | ✅ |
 | B4 | `feat(music): 新增分页接口` | 列表接口无分页（单次返回 17.93 MB） | 响应体积与耗时前后对比 | ⬜ |
 | B5 | `perf(music): 列表去掉逐行 4 次 URI 调用` | 5000 行 = 20000 次调用 | 接口耗时前后对比 | ⬜ |
 | B6 | `refactor(music): 删歌多步操作加事务` | 现在删文件/歌词/封面/DB/ES 五步无回滚 | 制造中途失败，确认能回滚 | ⬜ |

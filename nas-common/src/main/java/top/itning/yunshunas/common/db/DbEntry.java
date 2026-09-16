@@ -30,7 +30,8 @@ public class DbEntry {
                   `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                   PRIMARY KEY (`id`) USING BTREE,
                   UNIQUE KEY `UK_music_id` (`music_id`) USING BTREE,
-                  KEY `idx_name_singer_type` (`name`, `singer`, `type`) USING BTREE
+                  KEY `idx_name_singer_type` (`name`, `singer`, `type`) USING BTREE,
+                  KEY `idx_gmt_create` (`gmt_create`) USING BTREE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
                 """),
         SQLITE("""
@@ -45,6 +46,7 @@ public class DbEntry {
                   `gmt_modified` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS idx_name_singer_type ON music (name, singer, type);
+                CREATE INDEX IF NOT EXISTS idx_gmt_create ON music (gmt_create);
                 """),
         ;
         @Getter

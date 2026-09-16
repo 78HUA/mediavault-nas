@@ -34,3 +34,17 @@ ALTER TABLE `music` DROP INDEX `index_music_id`;
 --    因此该顺序对这条查询都能用上；若将来出现只按 name 查的场景，也符合最左前缀。
 -- ------------------------------------------------------------
 ALTER TABLE `music` ADD INDEX `idx_name_singer_type` (`name`, `singer`, `type`);
+
+-- ------------------------------------------------------------
+-- 3. 新增 gmt_create 索引
+--    对应 findAll / findAllByNameLike 等查询的 ORDER BY gmt_create DESC。
+--
+--    ⚠️ 这个索引只对「带 LIMIT 的分页查询」立即生效，实测对比：
+--      · 无 LIMIT 的 SELECT * ORDER BY gmt_create DESC → 计划毫无变化，
+--        仍是 type=ALL + Using filesort。因为要返回全部行时，优化器宁可
+--        顺序全扫再排序，也不愿按索引回表做随机读。
+--      · 加 LIMIT 100 后 → type=index + Backward index scan（倒序扫索引），
+--        rows 由 49869 降到 100，Using filesort 消失，实测 25 ms → 约 0.2 ms。
+--    所以它与「列表接口加 LIMIT 分页」是配套改动，单独加收益有限。
+-- ------------------------------------------------------------
+ALTER TABLE `music` ADD INDEX `idx_gmt_create` (`gmt_create`);
