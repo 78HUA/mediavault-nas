@@ -39,6 +39,12 @@ public class VideoTransformHandler {
     private static final long SHUTDOWN_WAIT_SECONDS = 30L;
 
     /**
+     * 进度推送的最小间隔（毫秒）。ffmpeg 每秒会输出多行状态，逐条广播就是消息风暴，
+     * 而且每条都要写给所有会话；限制间隔后消息量与客户端数量都不再敏感。
+     */
+    private static final long PROGRESS_PUSH_INTERVAL_MS = 500L;
+
+    /**
      * 提交结果
      */
     public enum SubmitResult {
@@ -72,6 +78,10 @@ public class VideoTransformHandler {
     private final AtomicLong submittedCount = new AtomicLong();
     private final AtomicLong rejectedCount = new AtomicLong();
     private final AtomicLong failedCount = new AtomicLong();
+    /**
+     * 上次进度推送时间，用于节流；多个转码任务共用一个窗口，等于给总推送速率设了上限
+     */
+    private final AtomicLong lastProgressPushAt = new AtomicLong();
 
     public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository) {
         this.video2M3u8Helper = video2M3u8Helper;
@@ -93,7 +103,8 @@ public class VideoTransformHandler {
         progress = new Video2M3u8Helper.Progress() {
             @Override
             public void onLine(String line) {
-                ProgressWebSocket.sendMessage(line);
+                // 不再逐行广播：ffmpeg 每秒会输出多行状态，逐行推送对客户端和转码线程双向加压。
+                // 进度统一走 onProgress 的节流通道，原始日志另有 /log 端点。
             }
 
             @Override
@@ -109,9 +120,29 @@ public class VideoTransformHandler {
 
             @Override
             public void onProgress(long frame, long totalFrames, String percentage, String line) {
-                ProgressWebSocket.sendMessage(String.format("%d/%d %s", frame, totalFrames, percentage));
+                sendProgressThrottled(String.format("%d/%d %s", frame, totalFrames, percentage));
             }
         };
+    }
+
+    /**
+     * 节流后的进度推送
+     * <p>
+     * 一个转码任务会连续产出进度，而每条都要写给所有会话；
+     * 这里限制为「距上次推送超过 {@value #PROGRESS_PUSH_INTERVAL_MS} 毫秒」才发一条，
+     * 使推送速率不再随客户端数量线性增长。
+     *
+     * @param message 消息
+     */
+    private void sendProgressThrottled(String message) {
+        long now = System.currentTimeMillis();
+        long last = lastProgressPushAt.get();
+        if (now - last < PROGRESS_PUSH_INTERVAL_MS) {
+            return;
+        }
+        if (lastProgressPushAt.compareAndSet(last, now)) {
+            ProgressWebSocket.sendMessage(message);
+        }
     }
 
     /**

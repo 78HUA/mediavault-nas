@@ -1,17 +1,20 @@
 package top.itning.yunshunas.common.socket;
 
+import jakarta.websocket.OnClose;
+import jakarta.websocket.OnError;
+import jakarta.websocket.OnMessage;
+import jakarta.websocket.OnOpen;
+import jakarta.websocket.Session;
+import jakarta.websocket.server.ServerEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import jakarta.websocket.*;
-import jakarta.websocket.server.ServerEndpoint;
-import java.io.IOException;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 日志输出
+ * 转码进度推送
  *
  * @author itning
  */
@@ -19,53 +22,60 @@ import java.util.Map;
 @ServerEndpoint(value = "/p")
 public final class ProgressWebSocket {
     private static final Logger logger = LoggerFactory.getLogger(ProgressWebSocket.class);
+
     /**
      * 存放Session
+     * <p>
+     * 必须用并发容器：<code>onOpen/onClose/onError</code> 跑在 WebSocket 容器线程上，
+     * 而 <code>sendMessage</code> 跑在业务线程（ffmpeg 输出读取线程）上，
+     * 三者会并发读写同一张表。原先是普通 HashMap，并发下会丢会话、
+     * 甚至在扩容时造成结构性损坏。
      */
-    private static final Map<String, Session> SESSION_MAP = new HashMap<>(16);
+    private static final Map<String, Session> SESSION_MAP = new ConcurrentHashMap<>(16);
 
     public static void sendMessage(String msg) {
-        clearSessionMap();
-        SESSION_MAP.forEach((k, v) -> {
+        SESSION_MAP.forEach((id, session) -> {
+            if (!session.isOpen()) {
+                SESSION_MAP.remove(id);
+                return;
+            }
             try {
-                v.getBasicRemote().sendText(msg);
-            } catch (IOException e) {
-                logger.debug(e.getMessage());
+                // 用异步发送：同步 sendText 会阻塞调用线程，
+                // 而调用方是 ffmpeg 的输出读取线程 —— 一个慢客户端就能反过来拖住转码
+                session.getAsyncRemote().sendText(msg);
+            } catch (Exception e) {
+                logger.warn("推送进度消息失败，移除会话 {}", id, e);
+                SESSION_MAP.remove(id);
             }
         });
     }
 
-    /**
-     * 清理SessionMap
-     */
-    private synchronized static void clearSessionMap() {
-        SESSION_MAP.values().stream()
-                .filter(session -> !session.isOpen()).toList()
-                .forEach(session -> SESSION_MAP.remove(session.getId()));
-    }
-
-
     @OnOpen
     public void onOpen(Session session) {
         SESSION_MAP.put(session.getId(), session);
+        if (logger.isDebugEnabled()) {
+            logger.debug("progress websocket open, 当前会话数 {}", SESSION_MAP.size());
+        }
     }
 
     @OnClose
-    public void onClose() {
-        logger.debug("on close");
+    public void onClose(Session session) {
+        // 原先 onClose 不做任何清理，已关闭的会话只能等下次广播时被顺带扫掉
+        SESSION_MAP.remove(session.getId());
+        if (logger.isDebugEnabled()) {
+            logger.debug("progress websocket close, 当前会话数 {}", SESSION_MAP.size());
+        }
     }
 
     @OnMessage
-    public void onMessage(String message, Session session) throws IOException {
+    public void onMessage(String message, Session session) {
         logger.debug("onMessage {}", message);
-        //回复用户
-        session.getBasicRemote().sendText("收到消息 ");
+        session.getAsyncRemote().sendText("收到消息");
     }
 
     @OnError
     public void onError(Session session, Throwable error) {
         SESSION_MAP.remove(session.getId());
-        logger.error("onError ", error);
-        error.printStackTrace();
+        logger.error("progress websocket error", error);
     }
 }
