@@ -2,6 +2,7 @@ package top.itning.yunshunas.video.controller;
 
 import org.apache.commons.io.FileUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -95,13 +96,23 @@ public class FileController {
         }
         String path = file.getPath();
         String locationMd5 = iVideoRepository.getLocationMd5(path);
-        boolean accepted = videoTransformHandler.put(path);
+        VideoTransformHandler.SubmitResult submitResult = videoTransformHandler.submit(path);
 
-        Map<String, Object> result = new LinkedHashMap<>(4);
+        Map<String, Object> result = new LinkedHashMap<>(5);
         result.put("location", path);
         result.put("locationMd5", locationMd5);
-        result.put("accepted", accepted);
+        result.put("result", submitResult.name());
+        result.put("accepted", submitResult == VideoTransformHandler.SubmitResult.SUBMITTED);
         result.put("m3u8Url", "/hls/" + locationMd5 + ".m3u8");
+
+        if (submitResult == VideoTransformHandler.SubmitResult.REJECTED) {
+            // 队列已满属于背压场景，用 429 让调用方退避重试，而不是无声地排队等待
+            RestModel<Map<String, Object>> body = new RestModel<>();
+            body.setCode(HttpStatus.TOO_MANY_REQUESTS.value());
+            body.setMsg("转码队列已满，请稍后重试");
+            body.setData(result);
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(body);
+        }
         return RestModel.ok(result);
     }
 

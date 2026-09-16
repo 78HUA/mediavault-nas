@@ -1,6 +1,7 @@
 package top.itning.yunshunas.video.video;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -10,10 +11,13 @@ import top.itning.yunshunas.video.repository.IVideoRepository;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @author itning
@@ -23,42 +27,69 @@ import java.util.concurrent.TimeUnit;
 public class VideoTransformHandler {
     private static final Logger logger = LoggerFactory.getLogger(VideoTransformHandler.class);
 
-    private static final Object NULL_VALUE = new Object();
+    /**
+     * 待转码任务上限。队列必须有界：无界队列会让最大线程数彻底失效、任务无限堆积直到 OOM，
+     * 且无法形成背压（阿里开发手册明确禁止 Executors 默认的无界队列写法）。
+     */
+    private static final int PENDING_CAPACITY = 64;
 
-    private final LinkedBlockingQueue<String> linkedBlockingQueue;
+    /**
+     * 优雅停机时等待在途任务结束的时间
+     */
+    private static final long SHUTDOWN_WAIT_SECONDS = 30L;
+
+    /**
+     * 提交结果
+     */
+    public enum SubmitResult {
+        /**
+         * 已加入待转码队列
+         */
+        SUBMITTED,
+        /**
+         * 同一文件正在转码或已在队列中，本次忽略
+         */
+        ALREADY_IN_PROGRESS,
+        /**
+         * 转码产物已存在，无需重复转码
+         */
+        ALREADY_DONE,
+        /**
+         * 队列已满，拒绝本次提交
+         */
+        REJECTED
+    }
 
     private final Video2M3u8Helper video2M3u8Helper;
-    private final ThreadPoolExecutor transformExecutorService;
-    private final ThreadPoolExecutor synchronousBlockingSingleService;
     private final IVideoRepository iVideoRepository;
+    private final ThreadPoolExecutor transformExecutorService;
     private final Video2M3u8Helper.Progress progress;
-    private final Map<String, Object> VIDEO_CURRENTLY_BEING_TRANSCODED = new ConcurrentHashMap<>();
+    /**
+     * 在途任务集合（正在转码 + 已在队列）。用集合做原子去重，
+     * 替代原先「查 Map → 遍历队列 → 入队」的三步非原子检查，同时消除 O(n) 的队列遍历。
+     */
+    private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+    private final AtomicLong submittedCount = new AtomicLong();
+    private final AtomicLong rejectedCount = new AtomicLong();
 
     public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository) {
         this.video2M3u8Helper = video2M3u8Helper;
         this.iVideoRepository = iVideoRepository;
         int processors = Runtime.getRuntime().availableProcessors();
-
-        //与CPU核数相同的线程
-        this.transformExecutorService = new ThreadPoolExecutor(processors,
-                processors,
+        // 转码的实际计算力来自 ffmpeg 子进程，且 ffmpeg 自身就是多线程的。
+        // 外层再按核数并发会让线程总量远超核数（实测 12 并发比串行慢约 9 倍），故取核数一半。
+        int concurrency = Math.max(1, processors / 2);
+        this.transformExecutorService = new ThreadPoolExecutor(
+                concurrency,
+                concurrency,
                 0L,
                 TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(),
-                new ThreadFactoryBuilder().setNameFormat("trans-pool-%d").build());
-        this.synchronousBlockingSingleService = new ThreadPoolExecutor(1,
-                1,
-                0L,
-                TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(),
-                new ThreadFactoryBuilder().setNameFormat("single-pool-%d").build());
-        this.linkedBlockingQueue = new LinkedBlockingQueue<>();
+                new LinkedBlockingQueue<>(PENDING_CAPACITY),
+                new ThreadFactoryBuilder().setNameFormat("trans-pool-%d").build(),
+                new ThreadPoolExecutor.AbortPolicy());
+        logger.info("转码线程池初始化：并发 {}，待处理上限 {}（CPU 核数 {}）",
+                concurrency, PENDING_CAPACITY, processors);
         progress = new Video2M3u8Helper.Progress() {
-            @Override
-            public void onStart(String fromFile, String toPath, String fileName) {
-                VIDEO_CURRENTLY_BEING_TRANSCODED.put(fromFile, NULL_VALUE);
-            }
-
             @Override
             public void onLine(String line) {
                 ProgressWebSocket.sendMessage(line);
@@ -66,13 +97,11 @@ public class VideoTransformHandler {
 
             @Override
             public void onFinish(String fromFile, String toPath, String fileName) {
-                VIDEO_CURRENTLY_BEING_TRANSCODED.remove(fromFile);
                 ProgressWebSocket.sendMessage(String.format("完成转换 文件：%s 目标路径：%s 文件名：%s", fromFile, toPath, fileName));
             }
 
             @Override
             public void onError(Exception e, String fromFile, String toPath, String fileName) {
-                VIDEO_CURRENTLY_BEING_TRANSCODED.remove(fromFile);
                 ProgressWebSocket.sendMessage(String.format("Exception In Video Convert: %s %s %s", fromFile, toPath, fileName));
                 ProgressWebSocket.sendMessage(e.getMessage());
             }
@@ -82,68 +111,82 @@ public class VideoTransformHandler {
                 ProgressWebSocket.sendMessage(String.format("%d/%d %s", frame, totalFrames, percentage));
             }
         };
-        start();
     }
 
-    private void start() {
-        synchronousBlockingSingleService.submit(() -> {
-            //noinspection InfiniteLoopStatement
-            while (true) {
-                try {
-                    //will blocking
-                    final String location = linkedBlockingQueue.take();
-                    transformExecutorService.submit(() -> video2M3u8Helper.videoConvert(
-                            location,
-                            iVideoRepository.getWriteDir(location),
-                            iVideoRepository.getLocationMd5(location),
-                            progress
-                    ));
-                } catch (InterruptedException e) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("get exception {}", e.getMessage());
-                    }
-                }
-            }
-        });
-    }
-
-    public boolean put(String location) {
-        try {
-            if (VIDEO_CURRENTLY_BEING_TRANSCODED.containsKey(location)) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("currently being transcoded {}", location);
-                }
-                return true;
-            }
-            if (linkedBlockingQueue.contains(location)) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("already in queue {}", location);
-                }
-                return true;
-            }
-            File m3u8File = new File(iVideoRepository.getWriteDir(location) + File.separator + iVideoRepository.getLocationMd5(location) + ".m3u8");
-            if (m3u8File.exists()) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("already exist m3u8 file {}", location);
-                }
-                return false;
-            }
-            linkedBlockingQueue.put(location);
-            return true;
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-            return false;
+    /**
+     * 提交转码任务
+     *
+     * @param location 视频文件路径
+     * @return 提交结果
+     */
+    public SubmitResult submit(String location) {
+        String writeDir = iVideoRepository.getWriteDir(location);
+        String locationMd5 = iVideoRepository.getLocationMd5(location);
+        File m3u8File = new File(writeDir + File.separator + locationMd5 + ".m3u8");
+        if (m3u8File.exists()) {
+            return SubmitResult.ALREADY_DONE;
         }
+        // 原子去重：add 返回 false 说明已在途（正在转码或已在队列）
+        if (!inFlight.add(location)) {
+            return SubmitResult.ALREADY_IN_PROGRESS;
+        }
+        try {
+            transformExecutorService.execute(() -> {
+                try {
+                    video2M3u8Helper.videoConvert(location, writeDir, locationMd5, progress);
+                } finally {
+                    inFlight.remove(location);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            inFlight.remove(location);
+            long rejected = rejectedCount.incrementAndGet();
+            logger.warn("转码队列已满，拒绝任务：{}（累计拒绝 {} 个）", location, rejected);
+            return SubmitResult.REJECTED;
+        }
+        submittedCount.incrementAndGet();
+        return SubmitResult.SUBMITTED;
     }
 
+    /**
+     * 线程池与队列状态
+     *
+     * @return 状态快照
+     */
     public Map<String, Object> status() {
-        Map<String, Object> statusMap = new HashMap<>(6);
+        Map<String, Object> statusMap = new HashMap<>(10);
         statusMap.put("activeCount", transformExecutorService.getActiveCount());
         statusMap.put("completedTaskCount", transformExecutorService.getCompletedTaskCount());
         statusMap.put("corePoolSize", transformExecutorService.getCorePoolSize());
+        statusMap.put("maxPoolSize", transformExecutorService.getMaximumPoolSize());
         statusMap.put("poolSize", transformExecutorService.getPoolSize());
         statusMap.put("taskCount", transformExecutorService.getTaskCount());
-        statusMap.put("queue", linkedBlockingQueue.toArray(new String[0]));
+        statusMap.put("queueSize", transformExecutorService.getQueue().size());
+        statusMap.put("queueCapacity", PENDING_CAPACITY);
+        statusMap.put("inFlightCount", inFlight.size());
+        statusMap.put("submittedCount", submittedCount.get());
+        statusMap.put("rejectedCount", rejectedCount.get());
         return statusMap;
+    }
+
+    /**
+     * 优雅停机：先不再接受新任务，等待在途任务结束；超时才强制中断。
+     * 否则停机时队列里的任务被静默丢弃、正在跑的 ffmpeg 被硬中断并留下半截产物。
+     */
+    @PreDestroy
+    public void shutdown() {
+        int pending = transformExecutorService.getQueue().size();
+        logger.info("开始停止转码线程池，待处理任务数：{}", pending);
+        transformExecutorService.shutdown();
+        try {
+            if (!transformExecutorService.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                logger.warn("转码线程池未在 {} 秒内结束，强制停止", SHUTDOWN_WAIT_SECONDS);
+                transformExecutorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            transformExecutorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        logger.info("转码线程池已停止");
     }
 }
