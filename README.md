@@ -177,7 +177,8 @@ MQ 的实测结论：正常任务 ack 出产物；失败任务进死信队列；
 | 列表逐行 URI 调用 | **经实测证否后放弃**：分页后每页仅 100–200 行，整页 14 ms，没有可优化的瓶颈 |
 | 删歌流程加事务 | **经读码证否后放弃**：该流程 5 步里只有 1 条 DB 语句，单条语句本身即原子，`@Transactional` 提供不了任何原子性；文件与 ES 也参与不了 JDBC 事务 |
 | MQ 失败重试 | 有意不做：重试只对**瞬时**故障有意义，而转码失败多为**确定性**失败；真要做的正确姿势是延迟队列（TTL + 死信路由回主队列），留给后续 |
-| 安全加固 | 已修任意文件删除（`/del` 无校验）、路径穿越类问题；其余（WebDAV XXE、上传大小上限、密码进日志、CORS）**未做** |
+| 安全加固 | 只修了 `/del` 的任意文件删除（原实现按原样绝对路径删除、且删除前还会创建目录）；**其余未做**：`/file?id` 的路径穿越、WebDAV XXE、上传大小上限、密码进日志、CORS 收紧 |
+| 转码链的前端接入 | 我把转码链接通到了 **API 层**（`POST /transcode`）—— 这足以做端到端测量与验证；但**前端未接入**，网页端播放仍走原始文件直链。要做到"用户点一下就转码"需改前端并重建 Angular（本地无 node_modules，成本较高） |
 | 正式压测 | 只有单请求延迟基线，**未做多线程 QPS 曲线** |
 
 ## 界面
@@ -189,6 +190,56 @@ MQ 的实测结论：正常任务 ack 出产物；失败任务进死信队列；
 ![](https://raw.githubusercontent.com/itning/yunshu-nas/master/pic/b.png)
 
 ![](https://raw.githubusercontent.com/itning/yunshu-nas/master/pic/c.png)
+
+## 怎么复现这些数字
+
+下面是最关键几项的复现方法 —— 数字能被人自己跑出来才算数。
+
+**SQL 层**（MySQL 8，音乐表 5 万行）：
+
+```sql
+-- 1) 三条件等值查询：加联合索引前后对比
+EXPLAIN SELECT * FROM music WHERE name = 'Summer Piano 00' AND singer = 'Jay Chou' AND type = 1;
+--   加索引前：type=ALL、key=NULL、rows≈49928、filtered=0.10%、Extra=Using where
+--   加索引后：type=ref、key=idx_name_singer_type、rows=2、filtered=100%
+ALTER TABLE music ADD INDEX idx_name_singer_type (name, singer, type);
+
+-- 2) 前导通配符 LIKE：加索引也没用（这是"为什么要用 ES"的证据）
+ALTER TABLE music ADD INDEX idx_singer (singer);
+EXPLAIN SELECT * FROM music WHERE singer LIKE 'Chou%';    -- type=range、rows 大降到 1
+EXPLAIN SELECT * FROM music WHERE singer LIKE '%Chou%';   -- 仍 type=ALL、key=NULL
+ALTER TABLE music DROP INDEX idx_singer;   -- 对 %kw% 无用，删掉以免白占写入成本
+
+-- 3) ORDER BY 的 filesort：只在带 LIMIT 时才能靠索引消除
+EXPLAIN SELECT * FROM music ORDER BY gmt_create DESC;            -- 加索引后计划不变
+EXPLAIN SELECT * FROM music ORDER BY gmt_create DESC LIMIT 100;  -- 转为 index + Backward index scan
+```
+
+**接口层**（启动应用并配置好业务库与音乐数据源后）：
+
+```bash
+curl -s -o /dev/null -w 'size=%{size_download}B  time=%{time_total}s\n' \
+  'http://127.0.0.1:8888/api/music/list'                  # 旧接口：约 17.9 MB
+curl -s -o /dev/null -w 'size=%{size_download}B  time=%{time_total}s\n' \
+  'http://127.0.0.1:8888/api/music/page?page=1&size=100'   # 新分页：约 36 KB
+```
+
+**MQ**（需本机 RabbitMQ；以 `--nas.mq.enabled=true` 开启）：
+
+```bash
+# 失败任务应进死信队列（主队列归零）
+curl -s -u guest:guest 'http://127.0.0.1:15672/api/queues/%2F/yunshu.transcode.dlq'
+# 幂等：把同一任务重复投两次，消费端会跳过（产物已存在），实际转码次数仍为 1
+```
+
+### 测量方法上的三点注意（我自己踩过）
+
+1. **单次 `EXPLAIN ANALYZE` 受缓冲池冷热影响很大** —— 同一个查询我先后见过 58 ms 与 20 ms。
+   所以结论要建立在"**同一条件下各跑多次取中位数**"上。我在验证联合索引时特意把索引先摘掉跑 5 次、
+   再加回来跑 5 次，就是为了避免拿不同时刻的单次值互相比较。
+2. **接口首次请求包含 JIT 与连接池预热** —— 分页接口冷启动 196 ms、预热后 14 ms。
+   拿冷启动去和已预热的作对比会得出完全错误的结论（我一开始就差点这么写）。
+3. **RabbitMQ 管理接口的 `messages` 统计有延迟**（默认约 5 秒），刚投递完立刻查询可能仍显示 0。
 
 ## 许可与致谢
 
