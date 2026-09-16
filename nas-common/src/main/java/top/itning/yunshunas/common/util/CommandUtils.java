@@ -40,6 +40,24 @@ public class CommandUtils {
     }
 
     /**
+     * 执行命令，**并在失败时抛异常**
+     * <p>
+     * 适用于「产物必须生成」的命令（如 ffmpeg 转码）。不要用于探测类命令：
+     * <code>ffmpeg -i file</code> 只做探查、不带输出文件时退出码本就非 0，
+     * 对它检查退出码会把正常情况当成失败。
+     *
+     * @param command     命令
+     * @param commandInfo 输出信息
+     * @throws IOException 命令执行失败或超时
+     */
+    public static void processChecked(List<String> command, Consumer<String> commandInfo) throws IOException {
+        ProcessRunner.Result result = ProcessRunner.run(command, commandInfo);
+        if (!result.isSuccess()) {
+            throw new IOException("命令" + result.describeFailure() + "，命令=" + command);
+        }
+    }
+
+    /**
      * 执行命令并返回输出
      *
      * @param command 命令

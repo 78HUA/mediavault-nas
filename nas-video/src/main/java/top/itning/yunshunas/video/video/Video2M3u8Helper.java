@@ -18,6 +18,7 @@ import java.util.List;
 import static com.jayway.jsonpath.Criteria.where;
 import static com.jayway.jsonpath.Filter.filter;
 import static top.itning.yunshunas.common.util.CommandUtils.process;
+import static top.itning.yunshunas.common.util.CommandUtils.processChecked;
 
 /**
  * ffmpeg 4.1.3 版本测试通过
@@ -153,7 +154,7 @@ public class Video2M3u8Helper {
         }
         command.add(toPath + File.separator + randomFileName);
 
-        process(command, line -> {
+        processChecked(command, line -> {
             if (progress != null) {
                 progress.onLine(line);
                 progress(line, videoFrames);
@@ -172,8 +173,9 @@ public class Video2M3u8Helper {
      * @param toPath   目标路径
      * @param fileName 文件名（不要扩展名）
      * @param progress 进度条
+     * @return 产物是否成功生成
      */
-    public void videoConvert(final String fromFile, final String toPath, final String fileName, Progress progress) {
+    public boolean videoConvert(final String fromFile, final String toPath, final String fileName, Progress progress) {
         if (logger.isDebugEnabled()) {
             logger.debug("start videoConvert {} {} {}", fromFile, toPath, fileName);
         }
@@ -207,12 +209,18 @@ public class Video2M3u8Helper {
             command.add(SPLIT_TIME_SECOND);
             command.add(toPath + File.separator + fileName + "-%03d.ts");
 
-            process(command, line -> {
+            processChecked(command, line -> {
                 if (progress != null) {
                     progress.onLine(line);
                 }
             });
 
+            File m3u8File = new File(toPath + File.separator + fileName + ".m3u8");
+            if (!m3u8File.isFile()) {
+                // 退出码为 0 却没产出产物，同样按失败处理：
+                // 否则「m3u8 文件存在即已完成」的判据会把残缺结果当成成品，且此后无法重转
+                throw new IllegalStateException("转码结束但未生成 m3u8 文件：" + m3u8File.getPath());
+            }
             boolean delete = new File(toPath + File.separator + DigestUtils.md5DigestAsHex(fromFile.getBytes()) + ".mp4").delete();
             if (logger.isDebugEnabled()) {
                 logger.debug("delete fromFile copy file {}", delete);
@@ -221,13 +229,14 @@ public class Video2M3u8Helper {
             if (progress != null) {
                 progress.onFinish(fromFile, toPath, fileName);
             }
+            return true;
         } catch (Exception e) {
-            if (logger.isDebugEnabled()) {
-                logger.debug("video convert exception: {}", e.getMessage());
-            }
+            // 原先只落 debug 日志且不带堆栈，转码失败在默认日志级别下完全不可见
+            logger.error("视频转码失败 file={} toPath={} fileName={}", fromFile, toPath, fileName, e);
             if (progress != null) {
                 progress.onError(e, fromFile, toPath, fileName);
             }
+            return false;
         }
     }
 
@@ -237,9 +246,10 @@ public class Video2M3u8Helper {
      * @param fromFile 源文件
      * @param toPath   目标路径
      * @param fileName 文件名（不要扩展名）
+     * @return 产物是否成功生成
      */
-    public void videoConvert(String fromFile, String toPath, String fileName) {
-        videoConvert(fromFile, toPath, fileName, null);
+    public boolean videoConvert(String fromFile, String toPath, String fileName) {
+        return videoConvert(fromFile, toPath, fileName, null);
     }
 
     /**

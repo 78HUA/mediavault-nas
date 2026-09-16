@@ -71,6 +71,7 @@ public class VideoTransformHandler {
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
     private final AtomicLong submittedCount = new AtomicLong();
     private final AtomicLong rejectedCount = new AtomicLong();
+    private final AtomicLong failedCount = new AtomicLong();
 
     public VideoTransformHandler(Video2M3u8Helper video2M3u8Helper, IVideoRepository iVideoRepository) {
         this.video2M3u8Helper = video2M3u8Helper;
@@ -133,7 +134,10 @@ public class VideoTransformHandler {
         try {
             transformExecutorService.execute(() -> {
                 try {
-                    video2M3u8Helper.videoConvert(location, writeDir, locationMd5, progress);
+                    if (!video2M3u8Helper.videoConvert(location, writeDir, locationMd5, progress)) {
+                        long failed = failedCount.incrementAndGet();
+                        logger.warn("转码失败 file={}（累计失败 {}）", location, failed);
+                    }
                 } finally {
                     inFlight.remove(location);
                 }
@@ -166,6 +170,7 @@ public class VideoTransformHandler {
         statusMap.put("inFlightCount", inFlight.size());
         statusMap.put("submittedCount", submittedCount.get());
         statusMap.put("rejectedCount", rejectedCount.get());
+        statusMap.put("failedCount", failedCount.get());
         return statusMap;
     }
 
