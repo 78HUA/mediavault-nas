@@ -93,13 +93,13 @@ musicRepository.findByNameAndSingerAndType(name, single, musicTypeOptional.get()
 
 ---
 
-## 3. 已核实的落点（这些是代码事实，不用再查一遍）
+## 3. 已核实的改动位置（这些是代码事实，不用再查一遍）
 
-| 落点 | 位置 | 说明 |
+| 功能 | 位置 | 说明 |
 |---|---|---|
 | 读音频标签 | `nas-music/.../service/impl/MusicMetaInfoServiceImpl.java` | `metaInfo(File, MusicType)` 用 jaudiotagger 读，**可能返回 `null`**（无标签时），要处理 |
 | 标签模型 | `nas-music/.../dto/MusicMetaInfo.java` | 有 `title` / `artists`(List) / `album` / `coverPictures` —— **比 `Music` 实体丰富**，`album` 目前无处可存 |
-| 写标签 | `MusicMetaInfoServiceImpl.editMetaInfo(...)` | **能回写文件标签**。所以 Agent 的产出有两个落点：数据库 + 文件本身 |
+| 写标签 | `MusicMetaInfoServiceImpl.editMetaInfo(...)` | **能回写文件标签**。所以 Agent 的产出有两个去处：数据库 + 文件本身 |
 | 实体 | `nas-music/.../entity/Music.java` | 只有 `id / musicId / name / singer / lyricId / type / gmtCreate / gmtModified` |
 | 类型枚举 | `nas-music/.../constant/MusicType.java` | **`FLAC=1, MP3=2, WAV=3, AAC=4`（只有 4 个）**，校验 `type` 合法性就用它 |
 | 查重 | `MusicRepository.findByNameAndSingerAndType(name, singer, type)` | 已存在，返回 `Optional<Music>` |

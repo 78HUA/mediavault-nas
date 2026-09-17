@@ -15,7 +15,7 @@ export class TranscodeResult {
    */
   result: string;
   /**
-   * 本次是否真的被接单（仅 SUBMITTED 为 true）
+   * 本次是否真的被受理（仅 SUBMITTED 为 true）
    */
   accepted: boolean;
   /**
