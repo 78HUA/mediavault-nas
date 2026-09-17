@@ -76,14 +76,26 @@ export class AddComponent implements OnInit {
       case 'musicFile': {
         this.musicUri = this.sanitizer.bypassSecurityTrustUrl(URL.createObjectURL(file));
         this.type = this.coverMusicType(file.type);
+        // 先用文件名兜底填歌名：大量音频（音效、下载来的曲子）根本没有内嵌标签，
+        // 而歌名/歌手是必填项 —— 不兜底就提交不了，等于这类文件压根加不进来。
+        // 歌手不兜底：编不出有意义的值，留空让用户自己填。
+        this.formGroup.patchValue({ name: file.name.replace(/\.[^.]+$/, '') });
         musicMetadata.parseBlob(file).then(data => {
-          this.formGroup.patchValue({ name: data.common.title });
-          this.formGroup.patchValue({ singer: data.common.artist });
+          // 只有文件确实带了标签才覆盖兜底值。
+          // 注意不能写成无条件 patchValue：标签为空时会把 undefined 写进去，反而把兜底值抹掉。
+          if (data.common.title) {
+            this.formGroup.patchValue({ name: data.common.title });
+          }
+          if (data.common.artist) {
+            this.formGroup.patchValue({ singer: data.common.artist });
+          }
           const picture = data.common.picture;
           if (picture && picture[0]) {
             this.coverUri = this.sanitizer.sanitize(SecurityContext.URL, this.sanitizer.bypassSecurityTrustUrl(URL.createObjectURL(new Blob([new Uint8Array(picture[0].data)]))))
           }
-        })
+        }).catch(() => {
+          // 标签解析失败（格式异常、文件损坏）不应阻塞添加：保留文件名兜底值，让用户自己核对
+        });
         break;
       }
       case 'lyricFile': {
