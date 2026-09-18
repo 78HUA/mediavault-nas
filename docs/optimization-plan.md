@@ -154,6 +154,14 @@
 | F6 | `feat(video):` 接通转码产物的最后一环 | **起因是审计原项目宣传语**（「自动视频转码、在线观看下载视频」到底兑现了几条）。审计发现「视频点播 / 自动转码 / 在线观看」其实是**同一个洞的三个面**：`canPlay` 只看后缀、转码链原本是死的、而修好转码之后**产物依然没人消费**（播放器一直播原始文件直链）。F6 补上最后一环：新增只读的 `GET /transcode/info`，播放页加「原文件 / 转码版本 / 转码后播放」三个控件 + 失败提示 + 就绪自动切换 | ✅ 浏览器实测：avi → `error.code=4` + 失败提示 + 「转码版本」置灰 → 点「转码后播放」→ 约 5 秒自动切换 → `video.src` 变 `blob:`（hls.js/MSE 标志）、`currentTime` 0→2.96、`paused=false`、1920×1080。主包仅 +4.5 KB（hls.js 586 KB 走动态 import 独立成 chunk） |
 | F7 | `docs:` 记录 F6 与「宣传语审计」结论 | README 补「转码产物的最后一环」小节与 `canPlay` 边界的说明（**实测撞到反例**：同一个 H.264/AAC 的 mkv，Chrome 能直接播，而 avi 标了 `canPlay=true` 却放不了 —— 后缀判断与「浏览器能不能播」不等价） | ✅ |
 | F8 | `fix(music): 无标签的音频文件也能添加` | **实测发现**：添加页的「歌名」「歌手」是 `readonly`，值只能由浏览器读音频内嵌标签填 —— 而手上 20 个真实文件里 **18 个标签为空**，两个必填项填不进去、校验不通过，点「新增」只弹“请检查必填字段！”，**等于这类文件压根加不进来**。改为：去掉 `readonly`；选文件时先用文件名（去扩展名）兜底填歌名；标签仅在非空时覆盖。⚠️ 关键在于**必须判空** —— 原代码是无条件 `patchValue({name: data.common.title})`，标签为空时会把 `undefined` 写进去、反而抹掉兜底值，不判空这次改动就是无效的 | ✅ 浏览器注入合成的**无标签** WAV 走完整界面流程：歌名自动填出「我的测试音效」+ 字段 `ng-valid` → 补歌手 → 点新增 → 确认框 → 提示「新增成功」→ 跳列表页；数据库 `name` 原始字节 `E68891E79A84E6B58BE8AF95E99FB3E69588` = 正确 UTF-8，`type=3(WAV)`，磁盘落地 `musicFileDir/<uuid>`。产物核对：`main.js` 的 `readonly` 由 22 处减到 20 处 |
+| F9 | `fix(es): Elasticsearch 不可达时不再拖垮应用启动` | **与 5.1 的 Redis 缺陷是同一类**：初始化阶段做网络 IO 却不设失败边界。`ElasticsearchConfig.init()` 在 `@PostConstruct` / 配置变更回调里直接连 ES 建索引 → 保存配置当场 500（**但配置已落库**）→ 下次启动 `elasticsearchConfig: Invocation of init method failed` → **`Application run failed`，应用永久起不来**。而设置界面本身由这个应用提供，等于死锁，只能删 SQLite（丢掉全部设置）。修三处：① `init()` 建索引包 `try/catch`，失败记 `lastError` + WARN 并 `destroy()` 彻底降级（模板置空 → `enabled()==false` → 调用点全走 no-op）；② 设置接口不再用 500 表达「连不上」，改 200 + 明确 msg；③ `reInit()` 逐条 `try/catch` 跳过 —— 原 `if (!HttpStatus.OK.equals(...)) continue` 对 4xx 是**死代码**（`RestTemplate` 遇 4xx 直接抛异常），而「没有歌词文件的曲子」是常态，一首就能中断整轮重建 | ✅ 隔离目录 + 复制配置实测（不碰真实配置）：保存指向无监听的 9200 → 修复前 **500**、修复后 **200** + `配置已保存，但当前连接 Elasticsearch 失败，本次降级为不启用：Connection refused`；重启 → 修复前 **`Application run failed`**、修复后 **`Started in 11.357s`** 且 `/` 与 `/health` 均 200；降级状态下删歌（内部调 `deleteLyric`）成功，磁盘文件与数据库行同步删除；全程无 `DataAccessResourceFailureException` |
+
+> **F9 的另一半结论（值得单独记）**：ES 的两个招牌功能**在界面上都不可达** ——
+> 前端从不调用 `GET /music/search_v2`（歌词全文搜索）与 `GET /api/music/reInitLyric`（重建索引）。
+> 用户能触达 ES 的路径只有"删歌"和"上传歌词"两条**被动写入**；
+> 列表页那个搜索框走的是数据库 `LIKE`，与 ES 无关。
+> 也就是说：**用户享受不到 ES 的任何好处，却要承担它把应用搞挂的风险** ——
+> 与当初转码链同型的"后端有、界面没有"。修完启动问题后，这个不对称仍然存在。
 
 ---
 
