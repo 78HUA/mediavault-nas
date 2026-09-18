@@ -12,8 +12,6 @@ import org.springframework.data.elasticsearch.core.query.HighlightQuery;
 import org.springframework.data.elasticsearch.core.query.highlight.Highlight;
 import org.springframework.data.elasticsearch.core.query.highlight.HighlightField;
 import org.springframework.data.elasticsearch.core.query.highlight.HighlightFieldParameters;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import top.itning.yunshunas.music.config.DataSourceConfig;
@@ -178,19 +176,30 @@ public class SearchServiceImpl implements SearchService {
         DataSourceConfig.DataSourceWrapper wrapper = readDataSourceMap.get(LyricDataSource.class);
         LyricDataSource dataSource = (LyricDataSource) wrapper.dataSource();
         List<Music> musicList = musicRepository.findAll();
+        int indexed = 0;
+        int skipped = 0;
         for (Music music : musicList) {
             URI uri = dataSource.getLyric(music.getLyricId());
-            ResponseEntity<String> responseEntity = restTemplate.getForEntity(uri, String.class);
-            if (!HttpStatus.OK.equals(responseEntity.getStatusCode())) {
-                log.warn("get music failed, status:{} uri:{}", responseEntity.getStatusCode(), uri);
+            String body;
+            try {
+                body = restTemplate.getForObject(uri, String.class);
+            } catch (Exception e) {
+                // 没有歌词文件的曲子是常态（/file/lyric 会 404），而 RestTemplate 默认遇 4xx/5xx
+                // 直接抛异常 —— 不逐条兜住的话，一首没有歌词的曲子就能中断整轮重建。
+                // 原实现写的是 if (!HttpStatus.OK.equals(...)) { continue; }，
+                // 那段对 4xx 是永远走不到的死代码。
+                log.warn("读取歌词失败，跳过。音乐ID：{} URI：{} 原因：{}", music.getMusicId(), uri, e.getMessage());
+                skipped++;
                 continue;
             }
-            String body = responseEntity.getBody();
             if (StringUtils.isBlank(body)) {
-                log.warn("get body failed, status:{} uri:{}", responseEntity.getStatusCode(), uri);
+                log.warn("歌词内容为空，跳过。音乐ID：{} URI：{}", music.getMusicId(), uri);
+                skipped++;
                 continue;
             }
             this.saveOrUpdateLyric(music.getMusicId(), music.getLyricId(), body);
+            indexed++;
         }
+        log.info("重建歌词索引完成：写入 {} 条，跳过 {} 条，共 {} 条", indexed, skipped, musicList.size());
     }
 }

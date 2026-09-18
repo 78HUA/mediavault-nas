@@ -1,6 +1,8 @@
 package top.itning.yunshunas.controller;
 
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -10,6 +12,7 @@ import top.itning.yunshunas.common.config.NasRedisProperties;
 import top.itning.yunshunas.common.db.ApplicationConfig;
 import top.itning.yunshunas.common.model.RestModel;
 import top.itning.yunshunas.common.util.JsonUtils;
+import top.itning.yunshunas.music.config.ElasticsearchConfig;
 import top.itning.yunshunas.music.config.ElasticsearchProperties;
 import top.itning.yunshunas.music.config.NasMusicProperties;
 
@@ -22,10 +25,12 @@ import top.itning.yunshunas.music.config.NasMusicProperties;
 @RestController
 public class SettingController {
     private final ApplicationConfig applicationConfig;
+    private final ElasticsearchConfig elasticsearchConfig;
 
     @Autowired
-    public SettingController(ApplicationConfig applicationConfig) {
+    public SettingController(ApplicationConfig applicationConfig, ElasticsearchConfig elasticsearchConfig) {
         this.applicationConfig = applicationConfig;
+        this.elasticsearchConfig = elasticsearchConfig;
     }
 
     @GetMapping("/{type}")
@@ -67,7 +72,19 @@ public class SettingController {
             }
             case "es" -> {
                 ElasticsearchProperties elasticsearchProperties = JsonUtils.OBJECT_MAPPER.readValue(value, ElasticsearchProperties.class);
-                return RestModel.ok(applicationConfig.setSetting(elasticsearchProperties));
+                applicationConfig.setSetting(elasticsearchProperties);
+                // 配置一定存下来了，但「能不能连上」是另一件事 —— 连不上时 ElasticsearchConfig 会降级。
+                // 原实现让连接异常直接冒出去变成 500：用户以为没保存成功，其实已经落库，
+                // 下次启动反而因为这条配置起不来。这里改成如实回报，不用异常表达业务结果。
+                String lastError = elasticsearchConfig.getLastError();
+                if (elasticsearchProperties.isEnabled() && StringUtils.isNotBlank(lastError)) {
+                    RestModel<Object> body = new RestModel<>();
+                    body.setCode(HttpStatus.OK.value());
+                    body.setMsg("配置已保存，但当前连接 Elasticsearch 失败，本次降级为不启用：" + lastError);
+                    body.setData(applicationConfig.getSetting(ElasticsearchProperties.class));
+                    return ResponseEntity.ok(body);
+                }
+                return RestModel.ok(applicationConfig.getSetting(ElasticsearchProperties.class));
             }
             case "redis" -> {
                 NasRedisProperties nasRedisProperties = JsonUtils.OBJECT_MAPPER.readValue(value, NasRedisProperties.class);

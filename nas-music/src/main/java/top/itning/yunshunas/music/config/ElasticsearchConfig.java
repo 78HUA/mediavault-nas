@@ -38,6 +38,11 @@ public class ElasticsearchConfig implements ApplicationListener<ConfigChangeEven
     private RestClient restClient;
     private RestClientTransport restClientTransport;
 
+    /**
+     * 上次初始化失败的原因；null 表示本次初始化没失败过
+     */
+    private String lastError;
+
     @Autowired
     public ElasticsearchConfig(ApplicationConfig applicationConfig) {
         this.applicationConfig = applicationConfig;
@@ -45,6 +50,7 @@ public class ElasticsearchConfig implements ApplicationListener<ConfigChangeEven
 
     @PostConstruct
     public void init() {
+        lastError = null;
         ElasticsearchProperties properties = applicationConfig.getSetting(ElasticsearchProperties.class);
         if (Objects.isNull(properties) || !properties.isEnabled()) {
             return;
@@ -58,10 +64,24 @@ public class ElasticsearchConfig implements ApplicationListener<ConfigChangeEven
         restClientTransport = new RestClientTransport(restClient, new JacksonJsonpMapper());
         ElasticsearchClient elasticsearchClient = new ElasticsearchClient(restClientTransport);
         elasticsearchTemplate = new ElasticsearchTemplate(elasticsearchClient);
-        IndexOperations indexOperations = elasticsearchTemplate.indexOps(Lyric.class);
-        if (!indexOperations.exists()) {
-            indexOperations.create();
+        // 建索引会真的发一次网络请求，这是「配了 ES 但连不上」时唯一会立刻暴露的地方。
+        // 绝不能让失败穿出 @PostConstruct：那会让 Spring 取消整个刷新、应用直接起不来，
+        // 而设置界面本身又由这个应用提供 —— 用户将无法从界面把配置改回去，形成死锁。
+        try {
+            IndexOperations indexOperations = elasticsearchTemplate.indexOps(Lyric.class);
+            if (!indexOperations.exists()) {
+                indexOperations.create();
+            }
+        } catch (Exception e) {
+            lastError = e.getMessage();
+            log.warn("Elasticsearch 配置已保存但当前不可用，本次降级为不启用：{}", lastError);
+            // 降级必须彻底：把模板也清掉，enabled() 才会是 false，
+            // 各调用点（删歌、上传歌词）才会走 no-op 分支 —— 否则每次调用都会抛异常，
+            // 把一个「可选中间件」的问题变成「核心业务不能用」。
+            destroy();
+            return;
         }
+        log.info("Elasticsearch 已启用：{}", properties.getUris());
     }
 
     @PreDestroy
@@ -98,6 +118,18 @@ public class ElasticsearchConfig implements ApplicationListener<ConfigChangeEven
 
     public boolean enabled() {
         return Objects.nonNull(elasticsearchTemplate);
+    }
+
+    /**
+     * 上次初始化失败的原因
+     * <p>
+     * 供设置接口把「配置存下来了，但当前连不上」如实回报给用户 ——
+     * 只写日志的话用户看不到，会误以为 Elasticsearch 已经在用了。
+     *
+     * @return 失败原因；本次初始化没失败过则为 null
+     */
+    public String getLastError() {
+        return lastError;
     }
 
     private HttpHost createHttpHost(String uri) {
