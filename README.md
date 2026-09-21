@@ -7,7 +7,9 @@
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-optional-FF6600?style=flat-square)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square)
 
-> 一个私人云盘 / 家庭流媒体服务器：把本机的视频与音乐变成可点播的流媒体服务，并提供 FTP 与 WebDAV 访问。
+> 一个家庭 NAS 与媒体服务器：把本机的视频与音乐变成可点播的流媒体服务，并提供 FTP 与 WebDAV 访问。
+> **注意边界**：文件存取能力来自 FTP（完整上传下载）与 WebDAV（**只读，且只覆盖音乐库**），
+> 网页端可浏览服务器目录；**没有做分享链接、多用户与权限体系** —— 定位是单人自用，不是多租户网盘。
 
 本仓库基于开源项目 [itning/yunshu-nas](https://github.com/itning/yunshu-nas) 二次开发，遵循 Apache-2.0。
 **包名（`top.itning.yunshunas.*`）与原作者署名全部保留**，原项目版权归原作者所有（见 [LICENSE](LICENSE)）。
