@@ -147,9 +147,9 @@
 | # | 提交 | 目标 | 状态 |
 |---|---|---|---|
 | F1 | `docs: README 重写` | 以「改前 → 改后」实测数据为主线 | ✅ |
-| F2 | `chore: 项目改名` | **只改外衣**：README / Dockerfile / CI / 前端标题；⛔ 不动包名 `top.itning.yunshunas.*`（94 个文件）与原项目文件的 `@author itning`（Apache-2.0 义务） | ✅ |
+| F2 | `chore: 项目改名` | **只改外衣**：README / Dockerfile / CI / 前端标题；⛔ 不动包名 `top.itning.yunshunas.*`（原项目 94 个文件，连同本次新增共 103 个）与原项目文件的 `@author itning`（Apache-2.0 义务） | ✅ |
 | F3 | `docs: 前后对比证据归档` | 改后数字与「怎么复现」并入 README，单独的逐项分析落在 `docs/analysis/`；`.baseline/out/` 原始输出保留在本地作底稿 | ✅ |
-| F4 | `chore: 新增类改用本人署名` | 新增类的 `@author` 与原作者署名分开：`ProcessRunner`、`RedisDistributedLock`、`NasRedisConfig`、`NasRedisProperties`、`ConfigBroadcaster`、`RemoteConfigChangeEvent`、`TranscodeMqConfig`、`TranscodeConsumer`、`PageResult` 共 9 个改署本人；**原项目文件的 `@author itning` 一个未动**（99−9=90 个仍保留） | ✅ |
+| F4 | `chore: 新增类改用本人署名` | 新增类的 `@author` 与原作者署名分开：`ProcessRunner`、`RedisDistributedLock`、`NasRedisConfig`、`NasRedisProperties`、`ConfigBroadcaster`、`RemoteConfigChangeEvent`、`TranscodeMqConfig`、`TranscodeConsumer`、`PageResult` 共 9 个改署本人；**原项目文件的 `@author itning` 一个未动**（`@author itning` **90 个一个未动**，另 9 个为本次新增） | ✅ |
 | F5 | `chore(build): 重建前端产物` | 源码在 F2 已改名，但已提交的构建产物没重新生成，界面里仍是旧名（旧产物里是转义形式 `\u4E91\u8212NAS`）。`npm ci` + `ng build` 重建，产物写入 `nas-deploy/src/main/resources/static` | 实测：旧产物含 `云舒NAS`、新产物为 0 且含 `MediaVault`；浏览器实测侧边栏显示 `MediaVault`，菜单与文件列表正常渲染；`\u817E\u8BAF\u4E91`（腾讯云）与包名按纪律保留 | ✅ |
 | F6 | `feat(video):` 接通转码产物的最后一环 | **起因是审计原项目宣传语**（「自动视频转码、在线观看下载视频」到底兑现了几条）。审计发现「视频点播 / 自动转码 / 在线观看」其实是**同一个洞的三个面**：`canPlay` 只看后缀、转码链原本是死的、而修好转码之后**产物依然没人消费**（播放器一直播原始文件直链）。F6 补上最后一环：新增只读的 `GET /transcode/info`，播放页加「原文件 / 转码版本 / 转码后播放」三个控件 + 失败提示 + 就绪自动切换 | ✅ 浏览器实测：avi → `error.code=4` + 失败提示 + 「转码版本」置灰 → 点「转码后播放」→ 约 5 秒自动切换 → `video.src` 变 `blob:`（hls.js/MSE 标志）、`currentTime` 0→2.96、`paused=false`、1920×1080。主包仅 +4.5 KB（hls.js 586 KB 走动态 import 独立成 chunk） |
 | F7 | `docs:` 记录 F6 与「宣传语审计」结论 | README 补「转码产物的最后一环」小节与 `canPlay` 边界的说明（**实测撞到反例**：同一个 H.264/AAC 的 mkv，Chrome 能直接播，而 avi 标了 `canPlay=true` 却放不了 —— 后缀判断与「浏览器能不能播」不等价） | ✅ |
@@ -188,7 +188,7 @@
 
 | 对象 | 处理 |
 |---|---|
-| 包名 `top.itning.yunshunas.*` | ⛔ **绝对不动**（94 个文件，动了 diff 会淹没优化） |
+| 包名 `top.itning.yunshunas.*` | ⛔ **绝对不动**（原项目 94 个文件，连同新增共 103 个；动了 diff 会淹没优化） |
 | **原项目文件**的 `@author itning` | ⛔ **不删不改**（Apache-2.0 署名义务；现有 90 个文件保留） |
 | **本次二创新增的类** | ✅ 署本人名（当前 9 个）。以后新增类沿用同一写法，不要照抄 `itning` |
 
