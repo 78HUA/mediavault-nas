@@ -155,13 +155,6 @@ java -jar nas-deploy/target/yunshu-nas-2.2.5.RELEASE.jar
 ```
 
 启动后访问 `http://127.0.0.1:8888`，在设置页配置业务数据库与数据源（不配也能启动）。
-
-Docker：
-
-```bash
-docker run --name mediavault -p 8888:8888 -e SERVER_URL=http://localhost:8888 mediavault-nas:latest
-```
-
 > **部署提示**：本项目面向**家庭内网**使用。如「已知取舍与未做的事」所列，仍有若干安全项未处理
 > （路径穿越、WebDAV XXE、上传大小上限、密码进日志、CORS）。**若要暴露到公网，
 > 请先自行加固，或置于反向代理与访问控制之后。**
